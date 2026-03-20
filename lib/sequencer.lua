@@ -1,8 +1,8 @@
 -- sequencer.lua: MIDI playback engine with clock-based timing
 -- Routes synth tracks to MIDI out, drum track to internal engine
 
-local MidiParser = include("midi_playbox/lib/midi_parser")
-local TrackAssign = include("midi_playbox/lib/track_assign")
+local MidiParser = include("midi-playbox/lib/midi_parser")
+local TrackAssign = include("midi-playbox/lib/track_assign")
 
 local Sequencer = {}
 Sequencer.__index = Sequencer

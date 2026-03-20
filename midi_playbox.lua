@@ -10,17 +10,17 @@
 
 engine.name = "DrumBox"
 
-local Sequencer = include("midi_playbox/lib/sequencer")
-local Queue = include("midi_playbox/lib/queue")
-local UILib = include("midi_playbox/lib/ui")
+local Sequencer = include("midi-playbox/lib/sequencer")
+local Queue = include("midi-playbox/lib/queue")
+local UILib = include("midi-playbox/lib/ui")
 
 local seq = Sequencer.new()
 local queue = Queue.new()
 local ui
 local state = {}
 
-local MIDI_DIR = _path.code .. "midi_playbox/midi"
-local PLAYLIST_DIR = _path.code .. "midi_playbox/playlists"
+local MIDI_DIR = _path.code .. "midi-playbox/midi"
+local PLAYLIST_DIR = _path.code .. "midi-playbox/playlists"
 
 local redraw_clock = nil
 
