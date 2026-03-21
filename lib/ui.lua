@@ -1,26 +1,36 @@
 -- ui.lua: Screen drawing and input handling for MIDI PLAYBOX
--- 4 pages: Now Playing, Track Setup, Queue, Library
+-- 5 pages: Now Playing, Track Setup, Drums, Queue, Library
 -- 128x64 screen, 3 encoders (E1/E2/E3), 3 keys (K1/K2/K3)
+-- Mutes: hold K1 + E2 to select track, K1 + K3 to toggle mute (any page)
 
 local UI = {}
 UI.__index = UI
 
-local PAGES = { "PLAY", "TRACKS", "QUEUE", "LIBRARY" }
+local PAGES = { "PLAY", "TRACKS", "DRUMS", "QUEUE", "LIBRARY" }
 local KIT_NAMES = { "808", "707", "606", "DrumTraks" }
+local TRACK_NAMES = { "bass", "chords", "lead", "drum" }
+local TRACK_LABELS = { "B", "C", "L", "D" }
+local DRUM_VOICE_NAMES = { "KICK", "SNRE", "CHH", "OHH", "CLAP", "LTOM", "HTOM", "CRSH" }
 
 function UI.new(sequencer, queue, state)
   local self = setmetatable({}, UI)
   self.seq = sequencer
   self.queue = queue
-  self.state = state  -- shared state table
+  self.state = state
 
   self.page = 1
-  self.cursor = 1         -- per-page cursor position
-  self.scroll = 0         -- scroll offset for lists
+  self.k1_held = false
+  self.mute_cursor = 1       -- 1-4 for track selection when K1 held
 
   -- Track setup page state
-  self.track_cursor = 1   -- 1=bass, 2=chords, 3=lead, 4=drum kit
-  self.track_field = 1    -- 1=out channel / kit, 2=octave
+  self.track_cursor = 1
+  self.track_field = 1       -- 1=out channel / kit, 2=octave
+
+  -- Drums page state
+  self.drum_cursor = 1       -- 1=kit, 2=filter, 3=resonance, 4=random amt
+  self.filter_freq = 20000
+  self.filter_res = 0.3
+  self.random_amt = 0.0
 
   -- Library state
   self.lib_files = {}
@@ -31,8 +41,9 @@ function UI.new(sequencer, queue, state)
   self.queue_cursor = 1
   self.queue_scroll = 0
 
-  -- Note flash (for visual feedback)
+  -- Note flash
   self.flash = { bass = 0, chords = 0, lead = 0, drum = 0 }
+  self.drum_flash = { 0, 0, 0, 0, 0, 0, 0, 0 }  -- per-voice flash
 
   return self
 end
@@ -51,12 +62,21 @@ function UI:refresh_library(midi_dir)
 end
 
 function UI:note_flash(track)
-  self.flash[track] = 4  -- frames to flash
+  self.flash[track] = 4
+end
+
+function UI:drum_voice_flash(voice)
+  if voice >= 0 and voice < 8 then
+    self.drum_flash[voice + 1] = 4
+  end
 end
 
 function UI:decay_flash()
   for k, v in pairs(self.flash) do
     if v > 0 then self.flash[k] = v - 1 end
+  end
+  for i = 1, 8 do
+    if self.drum_flash[i] > 0 then self.drum_flash[i] = self.drum_flash[i] - 1 end
   end
 end
 
@@ -74,10 +94,17 @@ function UI:draw()
   screen.text(PAGES[self.page])
 
   -- Page indicator dots
-  for i = 1, 4 do
+  for i = 1, 5 do
     screen.level(i == self.page and 15 or 2)
-    screen.rect(108 + (i - 1) * 5, 1, 3, 3)
+    screen.rect(103 + (i - 1) * 5, 1, 3, 3)
     screen.fill()
+  end
+
+  -- Mute overlay when K1 held
+  if self.k1_held then
+    self:draw_mute_overlay()
+    screen.update()
+    return
   end
 
   if self.page == 1 then
@@ -85,12 +112,44 @@ function UI:draw()
   elseif self.page == 2 then
     self:draw_tracks()
   elseif self.page == 3 then
-    self:draw_queue()
+    self:draw_drums()
   elseif self.page == 4 then
+    self:draw_queue()
+  elseif self.page == 5 then
     self:draw_library()
   end
 
   screen.update()
+end
+
+function UI:draw_mute_overlay()
+  screen.level(15)
+  screen.move(64, 12)
+  screen.text_center("MUTE SELECT")
+
+  for i, name in ipairs(TRACK_NAMES) do
+    local y = 18 + (i - 1) * 12
+    local selected = (self.mute_cursor == i)
+    local muted = self.seq.mute[name]
+
+    screen.level(selected and 15 or 5)
+    screen.move(20, y + 8)
+    screen.text(string.upper(name))
+
+    screen.level(muted and 15 or 3)
+    screen.move(80, y + 8)
+    screen.text(muted and "MUTED" or "on")
+
+    if selected then
+      screen.level(8)
+      screen.rect(16, y, 100, 11)
+      screen.stroke()
+    end
+  end
+
+  screen.level(3)
+  screen.move(64, 63)
+  screen.text_center("E2:select  K3:toggle")
 end
 
 function UI:draw_play()
@@ -136,25 +195,38 @@ function UI:draw_play()
   screen.move(0, 45)
   screen.text(format_time(self.seq.elapsed) .. " / " .. format_time(self.seq.duration))
 
-  -- Track activity indicators
-  local roles = { "bass", "chords", "lead", "drum" }
-  local labels = { "B", "C", "L", "D" }
-  for i, role in ipairs(roles) do
-    local x = (i - 1) * 32
-    screen.level(self.flash[role] > 0 and 15 or 3)
-    screen.move(x + 4, 56)
-    screen.text(labels[i])
-    -- Activity bar
-    screen.level(self.flash[role] > 0 and 12 or 1)
-    screen.rect(x, 58, 28, 4)
-    screen.fill()
-  end
-
   -- Queue position
   if self.queue:count() > 0 then
     screen.level(4)
     screen.move(90, 45)
     screen.text(self.queue.position .. "/" .. self.queue:count())
+  end
+
+  -- Track activity indicators with mute status
+  for i, name in ipairs(TRACK_NAMES) do
+    local x = (i - 1) * 32
+    local muted = self.seq.mute[name]
+
+    -- Label
+    screen.level(muted and 2 or (self.flash[name] > 0 and 15 or 6))
+    screen.move(x + 4, 56)
+    screen.text(TRACK_LABELS[i])
+
+    -- Mute indicator
+    if muted then
+      screen.level(2)
+      screen.move(x + 14, 56)
+      screen.text("M")
+    end
+
+    -- Activity bar
+    if muted then
+      screen.level(1)
+    else
+      screen.level(self.flash[name] > 0 and 12 or 2)
+    end
+    screen.rect(x, 58, 28, 4)
+    screen.fill()
   end
 end
 
@@ -165,16 +237,18 @@ function UI:draw_tracks()
   for i, role in ipairs(roles) do
     local y = 10 + (i - 1) * 14
     local selected = (self.track_cursor == i)
+    local muted = self.seq.mute[role]
 
-    -- Role name
-    screen.level(selected and 15 or 5)
+    -- Role name (dim if muted)
+    screen.level(muted and 3 or (selected and 15 or 5))
     screen.move(0, y + 6)
-    screen.text(string.upper(role:sub(1, 1)) .. role:sub(2))
+    local label = string.upper(role:sub(1, 1)) .. role:sub(2)
+    screen.text(muted and (label .. " M") or label)
 
     -- Source channel
     screen.level(selected and 10 or 4)
-    screen.move(42, y + 6)
-    local src = info[role].ch and ("src:" .. info[role].ch) or "---"
+    screen.move(46, y + 6)
+    local src = info[role].ch and ("s:" .. info[role].ch) or "---"
     screen.text(src)
 
     -- Output channel (editable)
@@ -184,27 +258,77 @@ function UI:draw_tracks()
 
     -- Octave
     screen.level(selected and self.track_field == 2 and 15 or 6)
-    screen.move(102, y + 6)
+    screen.move(104, y + 6)
     local oct = self.seq.octave[role] or 0
     screen.text(oct >= 0 and "+" .. oct or tostring(oct))
   end
 
-  -- Drum kit row
+  -- Drum row
   local y = 10 + 3 * 14
   local selected = (self.track_cursor == 4)
-  screen.level(selected and 15 or 5)
+  local muted = self.seq.mute.drum
+  screen.level(muted and 3 or (selected and 15 or 5))
   screen.move(0, y + 6)
-  screen.text("Drum")
+  screen.text(muted and "Drum M" or "Drum")
 
   screen.level(selected and 10 or 4)
-  screen.move(42, y + 6)
+  screen.move(46, y + 6)
   local drum_info = info.drum
-  local src = drum_info.ch and ("src:" .. drum_info.ch) or "---"
-  screen.text(src)
+  screen.text(drum_info.ch and ("s:" .. drum_info.ch) or "---")
 
   screen.level(selected and 15 or 6)
   screen.move(72, y + 6)
   screen.text("kit:" .. KIT_NAMES[self.state.kit or 1])
+end
+
+function UI:draw_drums()
+  -- Kit name
+  screen.level(self.drum_cursor == 1 and 15 or 6)
+  screen.move(0, 14)
+  screen.text("Kit: " .. KIT_NAMES[self.state.kit or 1])
+
+  -- Filter
+  screen.level(self.drum_cursor == 2 and 15 or 6)
+  screen.move(0, 24)
+  local freq_display
+  if self.filter_freq >= 20000 then
+    freq_display = "OFF"
+  elseif self.filter_freq >= 1000 then
+    freq_display = string.format("%.1fk", self.filter_freq / 1000)
+  else
+    freq_display = string.format("%dHz", math.floor(self.filter_freq))
+  end
+  screen.text("LPF:" .. freq_display)
+
+  -- Resonance
+  screen.level(self.drum_cursor == 3 and 15 or 6)
+  screen.move(70, 24)
+  screen.text("Res:" .. string.format("%.1f", self.filter_res))
+
+  -- Random amount
+  screen.level(self.drum_cursor == 4 and 15 or 6)
+  screen.move(0, 34)
+  local rnd_pct = math.floor(self.random_amt * 100)
+  screen.text("Rnd:" .. rnd_pct .. "%")
+
+  -- Keep indicator
+  screen.level(3)
+  screen.move(55, 34)
+  screen.text("K2:dice K3:keep")
+
+  -- 8 drum voices grid
+  for i = 1, 8 do
+    local x = ((i - 1) % 4) * 32
+    local y = 38 + math.floor((i - 1) / 4) * 13
+
+    screen.level(self.drum_flash[i] > 0 and 15 or 4)
+    screen.move(x + 2, y + 10)
+    screen.text(DRUM_VOICE_NAMES[i])
+
+    screen.level(self.drum_flash[i] > 0 and 12 or 1)
+    screen.rect(x, y + 12, 28, 2)
+    screen.fill()
+  end
 end
 
 function UI:draw_queue()
@@ -229,7 +353,6 @@ function UI:draw_queue()
     local is_current = (idx == self.queue.position)
     local is_selected = (idx == self.queue_cursor)
 
-    -- Highlight current and selected
     if is_selected then
       screen.level(1)
       screen.rect(0, y - 6, 128, 10)
@@ -281,7 +404,6 @@ function UI:draw_library()
     screen.text(name)
   end
 
-  -- Hint
   screen.level(3)
   screen.move(128, 62)
   screen.text_right("K3:add K2:play")
@@ -290,29 +412,35 @@ end
 -- ===== INPUT HANDLING =====
 
 function UI:enc(n, d)
+  -- K1 held: mute mode
+  if self.k1_held then
+    if n == 2 then
+      self.mute_cursor = util.clamp(self.mute_cursor + d, 1, 4)
+    end
+    return
+  end
+
   if n == 1 then
-    -- Page navigation
-    self.page = util.clamp(self.page + d, 1, 4)
+    self.page = util.clamp(self.page + d, 1, 5)
   elseif self.page == 1 then
     self:enc_play(n, d)
   elseif self.page == 2 then
     self:enc_tracks(n, d)
   elseif self.page == 3 then
-    self:enc_queue(n, d)
+    self:enc_drums(n, d)
   elseif self.page == 4 then
+    self:enc_queue(n, d)
+  elseif self.page == 5 then
     self:enc_library(n, d)
   end
 end
 
 function UI:enc_play(n, d)
   if n == 2 then
-    -- BPM adjust
     local bpm = self.seq:get_bpm() + d
     self.seq:set_bpm(bpm)
   elseif n == 3 then
-    -- Scrub through queue
     if d > 0 and self.queue:has_next() then
-      -- Skip to next song (handled by main script)
       if self.state.on_next then self.state.on_next() end
     end
   end
@@ -320,25 +448,46 @@ end
 
 function UI:enc_tracks(n, d)
   if n == 2 then
-    -- Navigate rows
     self.track_cursor = util.clamp(self.track_cursor + d, 1, 4)
   elseif n == 3 then
     if self.track_cursor <= 3 then
-      -- Edit field value
       local role = ({"bass", "chords", "lead"})[self.track_cursor]
       if self.track_field == 1 then
-        -- Change output MIDI channel
         local ch = self.seq.out_channels[role] + d
         self.seq.out_channels[role] = util.clamp(ch, 1, 16)
       elseif self.track_field == 2 then
-        -- Change octave
         local oct = (self.seq.octave[role] or 0) + d
         self.seq.octave[role] = util.clamp(oct, -3, 3)
       end
     else
-      -- Drum kit selection
       self.state.kit = util.clamp((self.state.kit or 1) + d, 1, 4)
-      engine.kit(self.state.kit - 1)  -- 0-indexed
+      engine.kit(self.state.kit - 1)
+    end
+  end
+end
+
+function UI:enc_drums(n, d)
+  if n == 2 then
+    self.drum_cursor = util.clamp(self.drum_cursor + d, 1, 4)
+  elseif n == 3 then
+    if self.drum_cursor == 1 then
+      self.state.kit = util.clamp((self.state.kit or 1) + d, 1, 4)
+      engine.kit(self.state.kit - 1)
+    elseif self.drum_cursor == 2 then
+      local freq = self.filter_freq
+      if d > 0 then
+        freq = math.min(20000, freq * 1.08)
+      else
+        freq = math.max(60, freq / 1.08)
+      end
+      self.filter_freq = freq
+      engine.lpf(freq)
+    elseif self.drum_cursor == 3 then
+      self.filter_res = util.clamp(self.filter_res + d * 0.05, 0.1, 1.0)
+      engine.res(self.filter_res)
+    elseif self.drum_cursor == 4 then
+      self.random_amt = util.clamp(self.random_amt + d * 0.02, 0, 1)
+      engine.random_amt(self.random_amt)
     end
   end
 end
@@ -346,14 +495,12 @@ end
 function UI:enc_queue(n, d)
   if n == 2 then
     self.queue_cursor = util.clamp(self.queue_cursor + d, 1, math.max(1, self.queue:count()))
-    -- Auto-scroll
     if self.queue_cursor > self.queue_scroll + 5 then
       self.queue_scroll = self.queue_cursor - 5
     elseif self.queue_cursor <= self.queue_scroll then
       self.queue_scroll = self.queue_cursor - 1
     end
   elseif n == 3 then
-    -- Reorder
     if d > 0 then
       self.queue:move_down(self.queue_cursor)
       self.queue_cursor = util.clamp(self.queue_cursor + 1, 1, self.queue:count())
@@ -376,41 +523,54 @@ function UI:enc_library(n, d)
 end
 
 function UI:key(n, z)
-  if z ~= 1 then return end  -- only on press
+  -- K1 hold tracking
+  if n == 1 then
+    self.k1_held = (z == 1)
+    return
+  end
+
+  if z ~= 1 then return end
+
+  -- K1 held: mute mode
+  if self.k1_held then
+    if n == 3 then
+      local track = TRACK_NAMES[self.mute_cursor]
+      self.seq:toggle_mute(track)
+    end
+    return
+  end
 
   if self.page == 1 then
     self:key_play(n)
   elseif self.page == 2 then
     self:key_tracks(n)
   elseif self.page == 3 then
-    self:key_queue(n)
+    self:key_drums(n)
   elseif self.page == 4 then
+    self:key_queue(n)
+  elseif self.page == 5 then
     self:key_library(n)
   end
 end
 
 function UI:key_play(n)
   if n == 2 then
-    -- Play/Stop toggle
     if self.seq.playing then
       self.seq:stop()
     else
       self.seq:play()
     end
   elseif n == 3 then
-    -- Restart
     self.seq:restart()
   end
 end
 
 function UI:key_tracks(n)
   if n == 2 then
-    -- Toggle field (out channel vs octave) for synth tracks
     if self.track_cursor <= 3 then
       self.track_field = self.track_field == 1 and 2 or 1
     end
   elseif n == 3 then
-    -- Cycle source channel for current track
     local roles = { "bass", "chords", "lead", "drum" }
     local role = roles[self.track_cursor]
     local available = self.seq:get_available_channels()
@@ -428,13 +588,23 @@ function UI:key_tracks(n)
   end
 end
 
+function UI:key_drums(n)
+  if n == 2 then
+    -- Roll the dice: generate new random offsets
+    engine.randomize()
+  elseif n == 3 then
+    -- Keep: bake current randomization into kit, reset amount to 0
+    engine.random_keep()
+    -- Amount stays but offsets are now baked in
+    -- This makes the current sound the new baseline
+  end
+end
+
 function UI:key_queue(n)
   if n == 2 then
-    -- Remove selected song from queue
     self.queue:remove(self.queue_cursor)
     self.queue_cursor = util.clamp(self.queue_cursor, 1, math.max(1, self.queue:count()))
   elseif n == 3 then
-    -- Jump to selected song and play
     self.queue.position = self.queue_cursor
     if self.state.on_load_current then
       self.state.on_load_current()
@@ -444,13 +614,11 @@ end
 
 function UI:key_library(n)
   if n == 2 then
-    -- Load and play immediately
     local file = self.lib_files[self.lib_cursor]
     if file and self.state.on_play_file then
       self.state.on_play_file(file)
     end
   elseif n == 3 then
-    -- Add to queue
     local file = self.lib_files[self.lib_cursor]
     if file and self.state.midi_dir then
       local name = file:match("(.+)%.mid[i]?$") or file

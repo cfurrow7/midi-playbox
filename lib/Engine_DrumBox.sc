@@ -1,14 +1,33 @@
 // Engine_DrumBox: 8-voice synthesized drum machine for MIDI PLAYBOX
 // Kits: 808, 707, 606, DrumTraks (all synthesis, no samples needed)
+// Global LPF filter on drum output
 
 Engine_DrumBox : CroneEngine {
     var <kitParams;
     var <masterAmp;
+    var <filterBus;
+    var <filterSynth;
+    var <lpfFreq;
+    var <randomAmount;
+    var <randomOffsets;  // per-voice per-param offsets
 
     alloc {
         masterAmp = 0.8;
+        lpfFreq = 20000;
+        randomAmount = 0.0;
+        randomOffsets = Array.fill(8, { Dictionary[\freq -> 0, \decay -> 0, \sweep -> 0, \noiseAmt -> 0] });
+
+        // Audio bus for drum output -> filter
+        filterBus = Bus.audio(context.server, 2);
 
         // ---- SynthDefs ----
+
+        // Global filter (sits on output, processes all drums)
+        SynthDef(\drumbox_filter, { |in, out=0, lpf=20000, res=0.3|
+            var sig = In.ar(in, 2);
+            sig = RLPF.ar(sig, lpf.clip(20, 20000), res.clip(0.1, 1.0));
+            Out.ar(out, sig);
+        }).add;
 
         // Kick: sine with pitch sweep + click
         SynthDef(\drumbox_kick, { |out=0, freq=45, sweep=4, decay=0.8, click=0.02, amp=0.5, pan=0|
@@ -131,6 +150,10 @@ Engine_DrumBox : CroneEngine {
         // Set current kit to 808 by default
         kitParams[\current] = kitParams[\kit808];
 
+        // Start filter synth after a short delay to ensure SynthDefs are ready
+        context.server.sync;
+        filterSynth = Synth(\drumbox_filter, [\in, filterBus, \out, 0, \lpf, lpfFreq], addAction: \addToTail);
+
         // ---- Commands ----
 
         // Trigger a drum voice (0-7) with velocity (0.0-1.0)
@@ -143,9 +166,31 @@ Engine_DrumBox : CroneEngine {
                 var spec = currentKit[voice];
                 var synthName = spec[0];
                 var params = spec[1].copy;
+                var offsets = randomOffsets[voice];
+
+                // Apply random offsets scaled by randomAmount
+                if (randomAmount > 0, {
+                    if (params[\freq].notNil, {
+                        var baseFreq = params[\freq];
+                        params[\freq] = (baseFreq * (1 + (offsets[\freq] * randomAmount))).clip(20, 15000);
+                    });
+                    if (params[\decay].notNil, {
+                        var baseDec = params[\decay];
+                        params[\decay] = (baseDec * (1 + (offsets[\decay] * randomAmount * 0.5))).clip(0.01, 3);
+                    });
+                    if (params[\sweep].notNil, {
+                        var baseSweep = params[\sweep];
+                        params[\sweep] = (baseSweep + (offsets[\sweep] * randomAmount * 3)).clip(0.5, 10);
+                    });
+                    if (params[\noiseAmt].notNil, {
+                        var baseNoise = params[\noiseAmt];
+                        params[\noiseAmt] = (baseNoise + (offsets[\noiseAmt] * randomAmount * 0.3)).clip(0, 1);
+                    });
+                });
+
                 params[\amp] = vel * masterAmp;
-                params[\out] = 0;
-                Synth(synthName, params.asPairs);
+                params[\out] = filterBus;
+                Synth(synthName, params.asPairs, addAction: \addToHead);
             });
         });
 
@@ -160,9 +205,73 @@ Engine_DrumBox : CroneEngine {
         this.addCommand(\amp, "f", { |msg|
             masterAmp = msg[1].asFloat.clip(0, 1);
         });
+
+        // LPF cutoff frequency (20-20000 Hz)
+        this.addCommand(\lpf, "f", { |msg|
+            lpfFreq = msg[1].asFloat.clip(20, 20000);
+            if (filterSynth.notNil, {
+                filterSynth.set(\lpf, lpfFreq);
+            });
+        });
+
+        // Filter resonance (0.1-1.0, lower = more resonant)
+        this.addCommand(\res, "f", { |msg|
+            if (filterSynth.notNil, {
+                filterSynth.set(\res, msg[1].asFloat.clip(0.1, 1.0));
+            });
+        });
+
+        // Randomize: generate new random offsets for all voices
+        this.addCommand(\randomize, "", { |msg|
+            randomOffsets = Array.fill(8, {
+                Dictionary[
+                    \freq -> 1.0.rand2,      // -1 to +1
+                    \decay -> 1.0.rand2,
+                    \sweep -> 1.0.rand2,
+                    \noiseAmt -> 1.0.rand2
+                ]
+            });
+        });
+
+        // Random amount (0.0 = no effect, 1.0 = full random)
+        this.addCommand(\random_amt, "f", { |msg|
+            randomAmount = msg[1].asFloat.clip(0, 1);
+        });
+
+        // Keep: bake current randomization into the kit params (new baseline)
+        this.addCommand(\random_keep, "", { |msg|
+            var currentKit = kitParams[\current];
+            if (currentKit.notNil && (randomAmount > 0), {
+                8.do { |voice|
+                    var spec = currentKit[voice];
+                    var params = spec[1];
+                    var offsets = randomOffsets[voice];
+
+                    if (params[\freq].notNil, {
+                        params[\freq] = (params[\freq] * (1 + (offsets[\freq] * randomAmount))).clip(20, 15000);
+                    });
+                    if (params[\decay].notNil, {
+                        params[\decay] = (params[\decay] * (1 + (offsets[\decay] * randomAmount * 0.5))).clip(0.01, 3);
+                    });
+                    if (params[\sweep].notNil, {
+                        var baseSweep = params[\sweep];
+                        params[\sweep] = (baseSweep + (offsets[\sweep] * randomAmount * 3)).clip(0.5, 10);
+                    });
+                    if (params[\noiseAmt].notNil, {
+                        var baseNoise = params[\noiseAmt];
+                        params[\noiseAmt] = (baseNoise + (offsets[\noiseAmt] * randomAmount * 0.3)).clip(0, 1);
+                    });
+                };
+                // Reset offsets to zero since they're now baked in
+                randomOffsets = Array.fill(8, {
+                    Dictionary[\freq -> 0, \decay -> 0, \sweep -> 0, \noiseAmt -> 0]
+                });
+            });
+        });
     }
 
     free {
-        // cleanup
+        if (filterSynth.notNil, { filterSynth.free; });
+        if (filterBus.notNil, { filterBus.free; });
     }
 }

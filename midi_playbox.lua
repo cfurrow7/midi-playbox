@@ -57,8 +57,11 @@ function init()
   engine.kit(0)  -- 808
 
   -- Sequencer callbacks
-  seq.on_note = function(track, note, vel)
+  seq.on_note = function(track, note, vel, drum_voice)
     ui:note_flash(track)
+    if drum_voice then
+      ui:drum_voice_flash(drum_voice)
+    end
   end
 
   seq.on_end = function()

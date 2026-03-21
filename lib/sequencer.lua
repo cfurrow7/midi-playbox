@@ -37,6 +37,14 @@ function Sequencer.new()
     lead = 0,
   }
 
+  -- Mutes
+  self.mute = {
+    bass = false,
+    chords = false,
+    lead = false,
+    drum = false,
+  }
+
   -- BPM
   self.original_bpm = 120
   self.bpm_override = nil     -- nil = use original
@@ -170,6 +178,9 @@ function Sequencer:route_event(event)
 
   if not track_name then return end  -- unassigned channel, skip
 
+  -- Check mute
+  if self.mute[track_name] then return end
+
   if track_name == "drum" then
     -- Route to internal drum engine
     if event.type == "note_on" and event.velocity > 0 then
@@ -177,7 +188,7 @@ function Sequencer:route_event(event)
       if voice then
         engine.trig_kit(voice, event.velocity / 127)
         if self.on_note then
-          self.on_note("drum", event.note, event.velocity)
+          self.on_note("drum", event.note, event.velocity, voice)
         end
       end
     end
@@ -220,6 +231,17 @@ function Sequencer:all_notes_off()
       if ch then
         self.midi_out:cc(123, 0, ch)  -- all notes off
       end
+    end
+  end
+end
+
+function Sequencer:toggle_mute(track_name)
+  if self.mute[track_name] ~= nil then
+    self.mute[track_name] = not self.mute[track_name]
+    -- If muting a MIDI track, send all notes off on that channel
+    if self.mute[track_name] and track_name ~= "drum" and self.midi_out then
+      local ch = self.out_channels[track_name]
+      if ch then self.midi_out:cc(123, 0, ch) end
     end
   end
 end

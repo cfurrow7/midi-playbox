@@ -1,8 +1,4 @@
 # MIDI PLAYBOX Playlist
-# One filename per line (from the midi/ folder)
-# Lines starting with # are comments
-#
-# Example:
-# song1.mid
-# song2.mid
-# beethoven-moonlight.mid
+I-Feel-Love.mid
+Heart-Of-Glass-2.mid
+chopin-sonata11.mid
