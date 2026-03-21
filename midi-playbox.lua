@@ -131,17 +131,9 @@ function setup_midimix()
   -- Connect MIDIMIX (default device 2, configurable via params)
   midimix:connect(2)
 
-  -- Faders 1-4: track volume
+  -- Faders 1-4: velocity scaling (down = quieter notes, 0 = silent)
   midimix.on_velocity = function(track, vel)
     seq.velocity_scale[track] = vel
-    -- Send MIDI CC 7 (volume) to synth tracks for immediate response
-    if track ~= "drum" and seq.midi_out then
-      local ch = seq.out_channels[track]
-      if ch then
-        seq.midi_out:cc(7, math.floor(vel * 127), ch)
-      end
-    end
-    -- Drum volume goes through engine amp
     if track == "drum" then
       engine.amp(vel)
     end
