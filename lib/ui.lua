@@ -50,15 +50,31 @@ end
 
 function UI:refresh_library(midi_dir)
   self.lib_files = {}
-  local files = util.scandir(midi_dir)
-  if files then
-    for _, f in ipairs(files) do
-      if f:match("%.mid[i]?$") then
-        table.insert(self.lib_files, f)
+  self.lib_dirs = {}  -- track subfolder display names
+  self:scan_dir_recursive(midi_dir, midi_dir)
+  table.sort(self.lib_files, function(a, b)
+    return a.display < b.display
+  end)
+end
+
+function UI:scan_dir_recursive(dir, base_dir)
+  local entries = util.scandir(dir)
+  if not entries then return end
+  for _, entry in ipairs(entries) do
+    local full_path = dir .. "/" .. entry
+    if entry:match("%.mid[i]?$") then
+      -- Build display name with subfolder prefix
+      local rel = dir:sub(#base_dir + 2)  -- relative path from midi/
+      local display = entry:match("(.+)%.mid[i]?$") or entry
+      if rel and #rel > 0 then
+        display = rel .. "/" .. display
       end
+      table.insert(self.lib_files, { file = full_path, name = entry, display = display })
+    elseif not entry:match("%.") then
+      -- Likely a directory, recurse
+      self:scan_dir_recursive(full_path, base_dir)
     end
   end
-  table.sort(self.lib_files)
 end
 
 function UI:note_flash(track)
@@ -387,7 +403,7 @@ function UI:draw_library()
     local idx = self.lib_scroll + i
     if idx > #self.lib_files then break end
 
-    local fname = self.lib_files[idx]
+    local entry = self.lib_files[idx]
     local y = 8 + i * 10
     local is_selected = (idx == self.lib_cursor)
 
@@ -399,7 +415,7 @@ function UI:draw_library()
 
     screen.level(is_selected and 15 or 5)
     screen.move(2, y + 2)
-    local name = fname:match("(.+)%.mid[i]?$") or fname
+    local name = entry.display
     if #name > 22 then name = name:sub(1, 21) .. "." end
     screen.text(name)
   end
@@ -614,15 +630,14 @@ end
 
 function UI:key_library(n)
   if n == 2 then
-    local file = self.lib_files[self.lib_cursor]
-    if file and self.state.on_play_file then
-      self.state.on_play_file(file)
+    local entry = self.lib_files[self.lib_cursor]
+    if entry and self.state.on_play_file then
+      self.state.on_play_file(entry)
     end
   elseif n == 3 then
-    local file = self.lib_files[self.lib_cursor]
-    if file and self.state.midi_dir then
-      local name = file:match("(.+)%.mid[i]?$") or file
-      self.queue:add(name, self.state.midi_dir .. "/" .. file)
+    local entry = self.lib_files[self.lib_cursor]
+    if entry then
+      self.queue:add(entry.display, entry.file)
     end
   end
 end

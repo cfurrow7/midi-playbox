@@ -37,11 +37,10 @@ function init()
     load_current()
   end
 
-  state.on_play_file = function(filename)
+  state.on_play_file = function(entry)
     -- Clear queue, add just this file, play
     queue:clear()
-    local name = filename:match("(.+)%.mid[i]?$") or filename
-    queue:add(name, MIDI_DIR .. "/" .. filename)
+    queue:add(entry.display, entry.file)
     queue.position = 1
     load_current()
   end
