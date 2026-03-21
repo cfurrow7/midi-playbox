@@ -19,12 +19,16 @@ local queue = Queue.new()
 local ui
 local state = {}
 
-local MIDI_DIR = _path.code .. "midi-playbox/midi"
+-- Shared MIDI folder accessible by all Norns scripts
+local MIDI_DIR = _path.data .. "midi"
 local PLAYLIST_DIR = _path.code .. "midi-playbox/playlists"
 
 local redraw_clock = nil
 
 function init()
+  -- Create shared MIDI folder if it doesn't exist
+  os.execute("mkdir -p " .. MIDI_DIR)
+
   state.kit = 1  -- 808
   state.midi_dir = MIDI_DIR
 
