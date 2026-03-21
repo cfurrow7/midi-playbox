@@ -106,6 +106,16 @@ function init()
     engine.kit(val - 1)
   end)
 
+  params:add_option("drum_output", "Drum Output", {"Internal", "MIDI (KO II)"}, 1)
+  params:set_action("drum_output", function(val)
+    seq.drum_mode = val == 1 and "internal" or "midi"
+  end)
+
+  params:add_number("drum_midi_ch", "Drum MIDI Ch", 1, 16, 10)
+  params:set_action("drum_midi_ch", function(val)
+    seq.drum_midi_ch = val
+  end)
+
   -- ===== MIDIMIX SETUP =====
   setup_midimix()
 

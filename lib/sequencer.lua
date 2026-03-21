@@ -30,6 +30,10 @@ function Sequencer.new()
     lead = 3,
   }
 
+  -- Drum output mode: "internal" = DrumBox engine, "midi" = MIDI out (e.g. KO II)
+  self.drum_mode = "internal"
+  self.drum_midi_ch = 10       -- MIDI channel for external drum machine
+
   -- Per-track octave offset
   self.octave = {
     bass = 0,
@@ -190,14 +194,39 @@ function Sequencer:route_event(event)
   if self.mute[track_name] then return end
 
   if track_name == "drum" then
-    -- Route to internal drum engine
-    if event.type == "note_on" and event.velocity > 0 then
-      local voice = TrackAssign.map_drum_note(event.note)
-      if voice then
-        local vel = (event.velocity / 127) * (self.velocity_scale.drum or 1.0)
-        engine.trig_kit(voice, vel)
-        if self.on_note then
-          self.on_note("drum", event.note, event.velocity, voice)
+    if self.drum_mode == "midi" then
+      -- Route to external drum machine (KO II, etc.) via MIDI
+      if self.midi_out then
+        local scale = self.velocity_scale.drum or 1.0
+        if event.type == "note_on" and event.velocity > 0 then
+          if scale <= 0.01 then return end
+          local scaled_vel = math.floor(event.velocity * scale)
+          scaled_vel = math.max(1, math.min(127, scaled_vel))
+          self.midi_out:note_on(event.note, scaled_vel, self.drum_midi_ch)
+          table.insert(self.active_notes, { self.drum_midi_ch, event.note })
+          if self.on_note then
+            self.on_note("drum", event.note, scaled_vel)
+          end
+        elseif event.type == "note_off" or (event.type == "note_on" and event.velocity == 0) then
+          self.midi_out:note_off(event.note, 0, self.drum_midi_ch)
+          for i = #self.active_notes, 1, -1 do
+            if self.active_notes[i][1] == self.drum_midi_ch and self.active_notes[i][2] == event.note then
+              table.remove(self.active_notes, i)
+              break
+            end
+          end
+        end
+      end
+    else
+      -- Route to internal drum engine
+      if event.type == "note_on" and event.velocity > 0 then
+        local voice = TrackAssign.map_drum_note(event.note)
+        if voice then
+          local vel = (event.velocity / 127) * (self.velocity_scale.drum or 1.0)
+          engine.trig_kit(voice, vel)
+          if self.on_note then
+            self.on_note("drum", event.note, event.velocity, voice)
+          end
         end
       end
     end
