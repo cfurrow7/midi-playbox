@@ -61,18 +61,20 @@ function UI:scan_dir_recursive(dir, base_dir)
   local entries = util.scandir(dir)
   if not entries then return end
   for _, entry in ipairs(entries) do
-    local full_path = dir .. "/" .. entry
-    if entry:match("%.mid[i]?$") then
+    -- util.scandir returns dirs with trailing "/"
+    if entry:match("/$") then
+      -- It's a directory, recurse
+      local dirname = entry:sub(1, -2)  -- strip trailing /
+      self:scan_dir_recursive(dir .. "/" .. dirname, base_dir)
+    elseif entry:match("%.mid$") or entry:match("%.midi$") or entry:match("%.MID$") then
+      local full_path = dir .. "/" .. entry
       -- Build display name with subfolder prefix
       local rel = dir:sub(#base_dir + 2)  -- relative path from midi/
-      local display = entry:match("(.+)%.mid[i]?$") or entry
+      local display = entry:match("(.+)%.[Mm][Ii][Dd][Ii]?$") or entry
       if rel and #rel > 0 then
         display = rel .. "/" .. display
       end
       table.insert(self.lib_files, { file = full_path, name = entry, display = display })
-    elseif not entry:match("%.") then
-      -- Likely a directory, recurse
-      self:scan_dir_recursive(full_path, base_dir)
     end
   end
 end
