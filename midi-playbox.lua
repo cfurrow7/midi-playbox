@@ -133,6 +133,7 @@ function setup_midimix()
 
   -- Faders 1-4: velocity scaling (down = quieter notes, 0 = silent)
   midimix.on_velocity = function(track, vel)
+    print("FADER " .. track .. " = " .. string.format("%.2f", vel))
     seq.velocity_scale[track] = vel
     if track == "drum" then
       engine.amp(vel)

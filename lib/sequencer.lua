@@ -209,12 +209,15 @@ function Sequencer:route_event(event)
       note = math.max(0, math.min(127, note))
 
       if event.type == "note_on" and event.velocity > 0 then
-        local scaled_vel = math.floor(event.velocity * (self.velocity_scale[track_name] or 1.0))
+        local scale = self.velocity_scale[track_name] or 1.0
+        -- Fader at 0 = suppress note entirely
+        if scale <= 0.01 then return end
+        local scaled_vel = math.floor(event.velocity * scale)
         scaled_vel = math.max(1, math.min(127, scaled_vel))
         self.midi_out:note_on(note, scaled_vel, out_ch)
         table.insert(self.active_notes, { out_ch, note })
         if self.on_note then
-          self.on_note(track_name, note, event.velocity)
+          self.on_note(track_name, note, scaled_vel)
         end
       elseif event.type == "note_off" or (event.type == "note_on" and event.velocity == 0) then
         self.midi_out:note_off(note, 0, out_ch)
