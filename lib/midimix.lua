@@ -111,12 +111,9 @@ function MidiMix:handle_cc(cc, val)
     return
   end
 
-  -- Master fader: BPM (40-240 range)
-  if cc == MASTER_CC then
-    local bpm = cc_to_range(val, 40, 240)
-    if self.on_bpm then self.on_bpm(bpm) end
-    return
-  end
+  -- Master fader: disabled (too easy to bump live)
+  -- if cc == MASTER_CC then
+  -- end
 
   -- Knob Row 1 (1-3): octave per synth track
   local k1 = self._knob1_map[cc]
