@@ -45,6 +45,14 @@ function Sequencer.new()
     drum = false,
   }
 
+  -- Per-track velocity scaling (0.0 to 1.0)
+  self.velocity_scale = {
+    bass = 1.0,
+    chords = 1.0,
+    lead = 1.0,
+    drum = 1.0,
+  }
+
   -- BPM
   self.original_bpm = 120
   self.bpm_override = nil     -- nil = use original
@@ -186,7 +194,8 @@ function Sequencer:route_event(event)
     if event.type == "note_on" and event.velocity > 0 then
       local voice = TrackAssign.map_drum_note(event.note)
       if voice then
-        engine.trig_kit(voice, event.velocity / 127)
+        local vel = (event.velocity / 127) * (self.velocity_scale.drum or 1.0)
+        engine.trig_kit(voice, vel)
         if self.on_note then
           self.on_note("drum", event.note, event.velocity, voice)
         end
@@ -200,7 +209,9 @@ function Sequencer:route_event(event)
       note = math.max(0, math.min(127, note))
 
       if event.type == "note_on" and event.velocity > 0 then
-        self.midi_out:note_on(note, event.velocity, out_ch)
+        local scaled_vel = math.floor(event.velocity * (self.velocity_scale[track_name] or 1.0))
+        scaled_vel = math.max(1, math.min(127, scaled_vel))
+        self.midi_out:note_on(note, scaled_vel, out_ch)
         table.insert(self.active_notes, { out_ch, note })
         if self.on_note then
           self.on_note(track_name, note, event.velocity)
