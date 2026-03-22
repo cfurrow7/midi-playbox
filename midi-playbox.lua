@@ -16,10 +16,12 @@ local Sequencer = include("midi-playbox/lib/sequencer")
 local Queue = include("midi-playbox/lib/queue")
 local UILib = include("midi-playbox/lib/ui")
 local MidiMix = include("midi-playbox/lib/midimix")
+local GridUI = include("midi-playbox/lib/grid_ui")
 
 local seq = Sequencer.new()
 local queue = Queue.new()
 local midimix = MidiMix.new()
+local grid_ui
 local ui
 local state = {}
 
@@ -63,11 +65,17 @@ function init()
   -- Set default drum kit
   engine.kit(0)  -- 808
 
+  -- Grid 128
+  grid_ui = GridUI.new(seq, queue, state)
+  grid_ui:connect()
+
   -- Sequencer callbacks
   seq.on_note = function(track_idx, note, vel, drum_voice)
     ui:note_flash(track_idx)
+    if grid_ui then grid_ui:note_flash(track_idx) end
     if drum_voice then
       ui:drum_voice_flash(drum_voice)
+      if grid_ui then grid_ui:drum_voice_flash(drum_voice) end
     end
   end
 
@@ -109,6 +117,10 @@ function init()
     while true do
       clock.sleep(1/10)
       ui:decay_flash()
+      if grid_ui then
+        grid_ui:decay_flash()
+        grid_ui:refresh()
+      end
       midimix:update_leds(seq.tracks)
       redraw()
     end
