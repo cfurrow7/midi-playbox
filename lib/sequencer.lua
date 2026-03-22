@@ -1,5 +1,5 @@
 -- sequencer.lua: MIDI playback engine with clock-based timing
--- Routes synth tracks to MIDI out, drum track to internal engine
+-- Dynamic track count - routes each track to MIDI out or internal drum engine
 
 local MidiParser = include("midi-playbox/lib/midi_parser")
 local TrackAssign = include("midi-playbox/lib/track_assign")
@@ -10,64 +10,30 @@ Sequencer.__index = Sequencer
 function Sequencer.new()
   local self = setmetatable({}, Sequencer)
 
-  self.midi_out = nil         -- midi device
-  self.parsed = nil           -- parsed MIDI data
-  self.timeline = nil         -- merged event list
-  self.duration = 0           -- song duration in seconds
+  self.midi_out = nil
+  self.parsed = nil
+  self.timeline = nil
+  self.duration = 0
 
   self.playing = false
   self.clock_id = nil
-  self.position = 1           -- current event index
-  self.elapsed = 0            -- playback time in seconds
+  self.position = 1
+  self.elapsed = 0
 
-  -- Track assignment
-  self.assignment = nil       -- { bass={ch,name}, chords={ch,name}, lead={ch,name}, drum={ch,name} }
-
-  -- Output config (user-configurable MIDI channels, up to 2 per track)
-  self.out_channels = {
-    bass = {1},
-    chords = {2},
-    lead = {3},
-  }
-
-  -- Drum output mode: "internal" = DrumBox engine, "midi" = MIDI out (e.g. KO II)
-  self.drum_mode = "internal"
-  self.drum_midi_ch = 10       -- MIDI channel for external drum machine
-
-  -- Per-track octave offset
-  self.octave = {
-    bass = 0,
-    chords = 0,
-    lead = 0,
-  }
-
-  -- Mutes
-  self.mute = {
-    bass = false,
-    chords = false,
-    lead = false,
-    drum = false,
-  }
-
-  -- Per-track velocity scaling (0.0 to 1.0)
-  self.velocity_scale = {
-    bass = 1.0,
-    chords = 1.0,
-    lead = 1.0,
-    drum = 1.0,
-  }
+  -- Dynamic track list (built from MIDI file)
+  self.tracks = {}  -- array of track objects
 
   -- BPM
   self.original_bpm = 120
-  self.bpm_override = nil     -- nil = use original
+  self.bpm_override = nil
 
   -- Callbacks
-  self.on_note = nil          -- function(track, note, vel) for UI feedback
-  self.on_end = nil           -- function() called when song ends
-  self.on_progress = nil      -- function(elapsed, duration)
+  self.on_note = nil       -- function(track_idx, note, vel, drum_voice)
+  self.on_end = nil
+  self.on_progress = nil
 
-  -- Active notes (for cleanup on stop)
-  self.active_notes = {}      -- { {ch, note}, ... }
+  -- Active notes for cleanup
+  self.active_notes = {}
 
   return self
 end
@@ -82,7 +48,9 @@ function Sequencer:load(filepath)
 
   self.parsed = parsed
   self.original_bpm = parsed.bpm
-  self.assignment = TrackAssign.auto_assign(parsed.channels)
+
+  -- Build tracks from MIDI channels
+  self.tracks = TrackAssign.build_tracks(parsed.channels)
 
   -- Rebuild timeline
   self:rebuild_timeline()
@@ -108,7 +76,6 @@ function Sequencer:set_bpm(bpm)
   else
     self.bpm_override = nil
   end
-  -- Rebuild timeline with new tempo
   local was_playing = self.playing
   if was_playing then self:stop() end
   self:rebuild_timeline()
@@ -122,14 +89,13 @@ function Sequencer:play()
   self.playing = true
 
   self.clock_id = clock.run(function()
-    local start_time = clock.get_beat_sec and util.time() or util.time()
+    local start_time = util.time()
     local start_elapsed = self.elapsed
 
     while self.playing and self.position <= #self.timeline do
       local event = self.timeline[self.position]
       local target_time = event.time - start_elapsed
 
-      -- Wait until event time
       local now = util.time() - start_time
       if target_time > now then
         clock.sleep(target_time - now)
@@ -137,19 +103,16 @@ function Sequencer:play()
 
       if not self.playing then break end
 
-      -- Route the event
       self:route_event(event)
 
       self.elapsed = start_elapsed + (util.time() - start_time)
       self.position = self.position + 1
 
-      -- Progress callback
       if self.on_progress then
         self.on_progress(self.elapsed, self.duration)
       end
     end
 
-    -- Song ended
     if self.playing and self.position > #self.timeline then
       self.playing = false
       self:all_notes_off()
@@ -174,71 +137,47 @@ function Sequencer:restart()
   self:play()
 end
 
-function Sequencer:route_event(event)
-  if not self.assignment then return end
-
-  local source_ch = event.channel
-
-  -- Check which track this channel belongs to
-  local track_name = nil
-  for _, role in ipairs({"bass", "chords", "lead", "drum"}) do
-    if self.assignment[role] and self.assignment[role].ch == source_ch then
-      track_name = role
-      break
+-- Find track by source MIDI channel
+function Sequencer:track_for_channel(ch)
+  for i, track in ipairs(self.tracks) do
+    if track.source_ch == ch then
+      return i, track
     end
   end
+  return nil, nil
+end
 
-  if not track_name then return end  -- unassigned channel, skip
+function Sequencer:route_event(event)
+  local track_idx, track = self:track_for_channel(event.channel)
+  if not track then return end
 
   -- Check mute
-  if self.mute[track_name] then return end
+  if track.mute then return end
 
-  if track_name == "drum" then
-    if self.drum_mode == "midi" then
-      -- Route to external drum machine (KO II, etc.) via MIDI
-      if self.midi_out then
-        local scale = self.velocity_scale.drum or 1.0
-        if event.type == "note_on" and event.velocity > 0 then
-          if scale <= 0.01 then return end
-          local scaled_vel = math.floor(event.velocity * scale)
-          scaled_vel = math.max(1, math.min(127, scaled_vel))
-          self.midi_out:note_on(event.note, scaled_vel, self.drum_midi_ch)
-          table.insert(self.active_notes, { self.drum_midi_ch, event.note })
-          if self.on_note then
-            self.on_note("drum", event.note, scaled_vel)
-          end
-        elseif event.type == "note_off" or (event.type == "note_on" and event.velocity == 0) then
-          self.midi_out:note_off(event.note, 0, self.drum_midi_ch)
-          for i = #self.active_notes, 1, -1 do
-            if self.active_notes[i][1] == self.drum_midi_ch and self.active_notes[i][2] == event.note then
-              table.remove(self.active_notes, i)
-              break
-            end
-          end
-        end
-      end
-    else
-      -- Route to internal drum engine
-      if event.type == "note_on" and event.velocity > 0 then
-        local voice = TrackAssign.map_drum_note(event.note)
-        if voice then
-          local vel = (event.velocity / 127) * (self.velocity_scale.drum or 1.0)
-          engine.trig_kit(voice, vel)
-          if self.on_note then
-            self.on_note("drum", event.note, event.velocity, voice)
-          end
+  -- Check output mode
+  if track.output == "off" then return end
+
+  if track.output == "internal" then
+    -- Route to internal drum engine
+    if event.type == "note_on" and event.velocity > 0 then
+      local voice = TrackAssign.map_drum_note(event.note)
+      if voice then
+        local vel = (event.velocity / 127) * (track.velocity_scale or 1.0)
+        engine.trig_kit(voice, vel)
+        if self.on_note then
+          self.on_note(track_idx, event.note, event.velocity, voice)
         end
       end
     end
-  else
-    -- Route to MIDI out (supports multiple channels per track)
+  elseif track.output == "midi" then
+    -- Route to MIDI out (supports multiple channels)
     if self.midi_out then
-      local channels = self.out_channels[track_name] or {1}
-      local note = event.note + (self.octave[track_name] or 0) * 12
+      local channels = track.out_channels or {1}
+      local note = event.note + (track.octave or 0) * 12
       note = math.max(0, math.min(127, note))
 
       if event.type == "note_on" and event.velocity > 0 then
-        local scale = self.velocity_scale[track_name] or 1.0
+        local scale = track.velocity_scale or 1.0
         if scale <= 0.01 then return end
         local scaled_vel = math.floor(event.velocity * scale)
         scaled_vel = math.max(1, math.min(127, scaled_vel))
@@ -247,7 +186,7 @@ function Sequencer:route_event(event)
           table.insert(self.active_notes, { out_ch, note })
         end
         if self.on_note then
-          self.on_note(track_name, note, scaled_vel)
+          self.on_note(track_idx, note, scaled_vel)
         end
       elseif event.type == "note_off" or (event.type == "note_on" and event.velocity == 0) then
         for _, out_ch in ipairs(channels) do
@@ -270,72 +209,62 @@ function Sequencer:all_notes_off()
       self.midi_out:note_off(an[2], 0, an[1])
     end
     self.active_notes = {}
-    -- Also send all notes off CC on all used channels
-    for _, role in ipairs({"bass", "chords", "lead"}) do
-      local channels = self.out_channels[role] or {}
-      for _, ch in ipairs(channels) do
-        self.midi_out:cc(123, 0, ch)
+    -- Send all notes off on all used output channels
+    local sent = {}
+    for _, track in ipairs(self.tracks) do
+      if track.output == "midi" then
+        for _, ch in ipairs(track.out_channels or {}) do
+          if not sent[ch] then
+            self.midi_out:cc(123, 0, ch)
+            sent[ch] = true
+          end
+        end
       end
     end
   end
 end
 
-function Sequencer:toggle_mute(track_name)
-  if self.mute[track_name] ~= nil then
-    self.mute[track_name] = not self.mute[track_name]
-    -- If muting a MIDI track, send all notes off on that channel
-    if self.mute[track_name] and track_name ~= "drum" and self.midi_out then
-      local channels = self.out_channels[track_name] or {}
-      for _, ch in ipairs(channels) do
-        self.midi_out:cc(123, 0, ch)
-      end
+function Sequencer:toggle_mute(track_idx)
+  local track = self.tracks[track_idx]
+  if not track then return end
+  track.mute = not track.mute
+  -- If muting a MIDI track, send all notes off
+  if track.mute and track.output == "midi" and self.midi_out then
+    for _, ch in ipairs(track.out_channels or {}) do
+      self.midi_out:cc(123, 0, ch)
     end
   end
 end
 
--- Get assignment info for display
-function Sequencer:get_track_info()
-  local info = {}
-  for _, role in ipairs({"bass", "chords", "lead", "drum"}) do
-    if self.assignment and self.assignment[role] then
-      info[role] = {
-        ch = self.assignment[role].ch,
-        name = self.assignment[role].name,
-        out_ch = role ~= "drum" and self.out_channels[role] or nil,
-        octave = self.octave[role] or 0,
-      }
-    else
-      info[role] = { ch = nil, name = "---", out_ch = nil, octave = 0 }
-    end
-  end
-  return info
-end
-
--- Manual track reassignment: swap a role to a different source channel
-function Sequencer:set_source_channel(role, new_ch)
-  if not self.assignment then return end
-  if self.assignment[role] then
-    self.assignment[role].ch = new_ch
-    -- Update name from parsed channels
-    if self.parsed and self.parsed.channels[new_ch] then
-      self.assignment[role].name = self.parsed.channels[new_ch].name or ("Ch " .. new_ch)
-    else
-      self.assignment[role].name = "Ch " .. new_ch
-    end
+-- Cycle output mode for a track: midi -> internal -> off -> midi
+function Sequencer:cycle_output(track_idx)
+  local track = self.tracks[track_idx]
+  if not track then return end
+  if track.output == "midi" then
+    track.output = "internal"
+  elseif track.output == "internal" then
+    track.output = "off"
   else
-    self.assignment[role] = { ch = new_ch, name = "Ch " .. new_ch }
+    track.output = "midi"
   end
 end
 
--- Get list of available source channels
-function Sequencer:get_available_channels()
-  if not self.parsed then return {} end
-  local channels = {}
-  for ch, _ in pairs(self.parsed.channels) do
-    table.insert(channels, ch)
+-- Set all output channels for a track
+function Sequencer:set_all_channels(track_idx)
+  local track = self.tracks[track_idx]
+  if not track then return end
+  if #track.out_channels == 16 then
+    -- Toggle back to original channel
+    track.out_channels = {track.source_ch}
+  else
+    local chs = {}
+    for i = 1, 16 do chs[i] = i end
+    track.out_channels = chs
   end
-  table.sort(channels)
-  return channels
+end
+
+function Sequencer:track_count()
+  return #self.tracks
 end
 
 return Sequencer

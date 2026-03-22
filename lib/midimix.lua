@@ -1,19 +1,16 @@
 -- midimix.lua: Akai MIDIMIX controller for MIDI JUKEBOX
 -- Adapted from midi-sines midimix driver
 --
--- LAYOUT (channels 1-4 used, 5-8 spare):
---   Faders 1-4: track velocity (bass/chords/lead/drum)
---   Knob Row 1 (1-3): octave per synth track, (4): drum kit
---   Knob Row 2 (4): drum LPF filter
---   Knob Row 3 (4): drum random amount
---   Mute 1-4: track mute toggle
---   Solo 1-4: cycle source MIDI channel
---   Rec 1-4: (spare)
---   Master fader: BPM
+-- LAYOUT (channels 1-8 map to tracks 1-8):
+--   Faders 1-8: track velocity (maps to track indices)
+--   Knob Row 1 (1-8): octave per track (synth tracks only)
+--   Knob Row 2 (8): drum LPF filter
+--   Knob Row 3 (8): drum random amount
+--   Mute 1-8: track mute toggle
+--   Rec 1-8: toggle all-channel broadcast
 --   Bank Left/Right: prev/next song in queue
 --
 -- LEDs: mute buttons light when track is NOT muted
--- NOTE: MIDI out channels are set via params/Norns menu only (safer for live use)
 
 local MidiMix = {}
 MidiMix.__index = MidiMix
@@ -27,15 +24,11 @@ local KNOB_ROW3 = {18, 22, 26, 30, 48, 52, 56, 60}
 
 -- MIDIMIX button notes
 local MUTE_NOTES = {1, 4, 7, 10, 13, 16, 19, 22}
-local SOLO_NOTES = {2, 5, 8, 11, 14, 17, 20, 23}
 local REC_NOTES  = {3, 6, 9, 12, 15, 18, 21, 24}
 local BANK_LEFT_NOTE = 25
 local BANK_RIGHT_NOTE = 26
 local BANK_LEFT_CC = 25
 local BANK_RIGHT_CC = 26
-
--- Track names in order
-local TRACKS = {"bass", "chords", "lead", "drum"}
 
 -- Scale CC value (0-127) to a range
 local function cc_to_range(val, min, max)
@@ -49,12 +42,11 @@ function MidiMix.new()
 
   self.midi_in = nil
 
-  -- Callbacks (set by main script)
-  self.on_velocity = nil      -- function(track_name, velocity_0_to_1)
-  self.on_octave = nil        -- function(track_name, octave)
-  self.on_mute_toggle = nil   -- function(track_name)
-  self.on_all_toggle = nil    -- function(track_name) toggle all-channel broadcast
-  self.on_bpm = nil           -- function(bpm)
+  -- Callbacks (set by main script) - all use track index (1-8)
+  self.on_velocity = nil      -- function(track_idx, velocity_0_to_1)
+  self.on_octave = nil        -- function(track_idx, octave)
+  self.on_mute_toggle = nil   -- function(track_idx)
+  self.on_all_toggle = nil    -- function(track_idx) toggle all-channel broadcast
   self.on_prev_song = nil     -- function()
   self.on_next_song = nil     -- function()
   self.on_kit = nil           -- function(kit_index)  -- 1-4
@@ -67,7 +59,6 @@ function MidiMix.new()
   self._knob2_map = {}
   self._knob3_map = {}
   self._mute_map = {}
-  self._solo_map = {}
   self._rec_map = {}
 
   for i = 1, 8 do
@@ -76,7 +67,6 @@ function MidiMix.new()
     self._knob2_map[KNOB_ROW2[i]] = i
     self._knob3_map[KNOB_ROW3[i]] = i
     self._mute_map[MUTE_NOTES[i]] = i
-    self._solo_map[SOLO_NOTES[i]] = i
     self._rec_map[REC_NOTES[i]] = i
   end
 
@@ -102,37 +92,25 @@ function MidiMix:handle_event(data)
 end
 
 function MidiMix:handle_cc(cc, val)
-  -- Faders 1-4: track velocity
-  local fader_ch = self._fader_map[cc]
-  if fader_ch and fader_ch <= 4 then
-    local track = TRACKS[fader_ch]
+  -- Faders 1-8: track velocity
+  local fader_idx = self._fader_map[cc]
+  if fader_idx then
     local vel = val / 127
-    if self.on_velocity then self.on_velocity(track, vel) end
+    if self.on_velocity then self.on_velocity(fader_idx, vel) end
     return
   end
 
-  -- Master fader: disabled (too easy to bump live)
-  -- if cc == MASTER_CC then
-  -- end
-
-  -- Knob Row 1 (1-3): octave per synth track
+  -- Knob Row 1 (1-8): octave per track
   local k1 = self._knob1_map[cc]
-  if k1 and k1 <= 3 then
-    local track = TRACKS[k1]
+  if k1 then
     local octave = cc_to_range(val, -3, 3)
-    if self.on_octave then self.on_octave(track, octave) end
-    return
-  end
-  -- Knob Row 1 (4): drum kit select
-  if k1 and k1 == 4 then
-    local kit = cc_to_range(val, 1, 4)
-    if self.on_kit then self.on_kit(kit) end
+    if self.on_octave then self.on_octave(k1, octave) end
     return
   end
 
-  -- Knob Row 2 (4): drum LPF filter
+  -- Knob Row 2 (8): drum LPF filter
   local k2 = self._knob2_map[cc]
-  if k2 and k2 == 4 then
+  if k2 and k2 == 8 then
     -- Logarithmic mapping: 0=60Hz, 127=20kHz
     local freq = 60 * math.pow(20000/60, val/127)
     if val == 127 then freq = 20000 end
@@ -140,9 +118,9 @@ function MidiMix:handle_cc(cc, val)
     return
   end
 
-  -- Knob Row 3 (4): drum random amount
+  -- Knob Row 3 (8): drum random amount
   local k3 = self._knob3_map[cc]
-  if k3 and k3 == 4 then
+  if k3 and k3 == 8 then
     local amt = val / 127
     if self.on_random_amt then self.on_random_amt(amt) end
     return
@@ -160,19 +138,17 @@ function MidiMix:handle_cc(cc, val)
 end
 
 function MidiMix:handle_note(note)
-  -- Mute buttons 1-4: track mute toggle
-  local mute_ch = self._mute_map[note]
-  if mute_ch and mute_ch <= 4 then
-    local track = TRACKS[mute_ch]
-    if self.on_mute_toggle then self.on_mute_toggle(track) end
+  -- Mute buttons 1-8: track mute toggle
+  local mute_idx = self._mute_map[note]
+  if mute_idx then
+    if self.on_mute_toggle then self.on_mute_toggle(mute_idx) end
     return
   end
 
-  -- Rec buttons 1-4: toggle all-channel broadcast
-  local rec_ch = self._rec_map[note]
-  if rec_ch and rec_ch <= 4 then
-    local track = TRACKS[rec_ch]
-    if self.on_all_toggle then self.on_all_toggle(track) end
+  -- Rec buttons 1-8: toggle all-channel broadcast
+  local rec_idx = self._rec_map[note]
+  if rec_idx then
+    if self.on_all_toggle then self.on_all_toggle(rec_idx) end
     return
   end
 
@@ -187,14 +163,14 @@ function MidiMix:handle_note(note)
   end
 end
 
--- Update LEDs to reflect mute state
--- mute_table: { bass=bool, chords=bool, lead=bool, drum=bool }
-function MidiMix:update_leds(mute_table)
+-- Update LEDs to reflect mute state for tracks
+-- tracks: array of track objects from sequencer
+function MidiMix:update_leds(tracks)
   if not self.midi_in then return end
-  for i = 1, 4 do
-    local track = TRACKS[i]
+  for i = 1, 8 do
     local note = MUTE_NOTES[i]
-    if mute_table and not mute_table[track] then
+    local track = tracks and tracks[i]
+    if track and not track.mute then
       -- LED on = track active (not muted)
       self.midi_in:note_on(note, 127, 1)
     else

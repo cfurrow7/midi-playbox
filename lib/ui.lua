@@ -1,15 +1,15 @@
 -- ui.lua: Screen drawing and input handling for MIDI JUKEBOX
 -- 5 pages: Now Playing, Track Setup, Drums, Queue, Library
--- 128x64 screen, 3 encoders (E1/E2/E3), 3 keys (K1/K2/K3)
+-- Dynamic track count - supports however many channels are in the MIDI file
 -- Mutes: hold K1 + E2 to select track, K1 + K3 to toggle mute (any page)
 
 local UI = {}
 UI.__index = UI
 
+local TrackAssign = include("midi-playbox/lib/track_assign")
+
 local PAGES = { "PLAY", "TRACKS", "DRUMS", "QUEUE", "LIBRARY" }
 local KIT_NAMES = { "808", "707", "606", "DrumTraks" }
-local TRACK_NAMES = { "bass", "chords", "lead", "drum" }
-local TRACK_LABELS = { "B", "C", "L", "D" }
 local DRUM_VOICE_NAMES = { "KICK", "SNRE", "CHH", "OHH", "CLAP", "LTOM", "HTOM", "CRSH" }
 
 function UI.new(sequencer, queue, state)
@@ -20,14 +20,15 @@ function UI.new(sequencer, queue, state)
 
   self.page = 1
   self.k1_held = false
-  self.mute_cursor = 1       -- 1-4 for track selection when K1 held
+  self.mute_cursor = 1
 
   -- Track setup page state
   self.track_cursor = 1
-  self.track_field = 1       -- 1=out channel / kit, 2=octave
+  self.track_scroll = 0
+  self.track_field = 1  -- 1=output ch, 2=octave, 3=output mode
 
   -- Drums page state
-  self.drum_cursor = 1       -- 1=kit, 2=filter, 3=resonance, 4=random amt
+  self.drum_cursor = 1
   self.filter_freq = 20000
   self.filter_res = 0.3
   self.random_amt = 0.0
@@ -41,29 +42,19 @@ function UI.new(sequencer, queue, state)
   self.queue_cursor = 1
   self.queue_scroll = 0
 
-  -- Note flash
-  self.flash = { bass = 0, chords = 0, lead = 0, drum = 0 }
-  self.drum_flash = { 0, 0, 0, 0, 0, 0, 0, 0 }  -- per-voice flash
+  -- Note flash per track (by index)
+  self.flash = {}
+  self.drum_flash = { 0, 0, 0, 0, 0, 0, 0, 0 }
 
-  -- Pyramid position per page (tucked into corners/gaps away from text)
-  -- Page 1 PLAY: right side near queue pos, page 2 TRACKS: far right
-  -- Page 3 DRUMS: top right, page 4 QUEUE: bottom right
-  -- Page 5 LIBRARY: bottom right
-  self.pyramid_pos = {
-    {115, 20},  -- PLAY: top right (above "> PLAY")
-    {118, 12},  -- TRACKS: top right corner
-    {118, 12},  -- DRUMS: top right corner
-    {115, 12},  -- QUEUE: top right
-    {115, 12},  -- LIBRARY: top right
-  }
-  self.pyramid_rot = 0  -- slow rotation angle
+  -- Animation
+  self.anim_t = 0
+  self.pyramid_rot = 0
 
   return self
 end
 
 function UI:refresh_library(midi_dir)
   self.lib_files = {}
-  self.lib_dirs = {}  -- track subfolder display names
   self:scan_dir_recursive(midi_dir, midi_dir)
   table.sort(self.lib_files, function(a, b)
     return a.display < b.display
@@ -74,15 +65,12 @@ function UI:scan_dir_recursive(dir, base_dir)
   local entries = util.scandir(dir)
   if not entries then return end
   for _, entry in ipairs(entries) do
-    -- util.scandir returns dirs with trailing "/"
     if entry:match("/$") then
-      -- It's a directory, recurse
-      local dirname = entry:sub(1, -2)  -- strip trailing /
+      local dirname = entry:sub(1, -2)
       self:scan_dir_recursive(dir .. "/" .. dirname, base_dir)
     elseif entry:match("%.mid$") or entry:match("%.midi$") or entry:match("%.MID$") then
       local full_path = dir .. "/" .. entry
-      -- Build display name with subfolder prefix
-      local rel = dir:sub(#base_dir + 2)  -- relative path from midi/
+      local rel = dir:sub(#base_dir + 2)
       local display = entry:match("(.+)%.[Mm][Ii][Dd][Ii]?$") or entry
       if rel and #rel > 0 then
         display = rel .. "/" .. display
@@ -92,59 +80,13 @@ function UI:scan_dir_recursive(dir, base_dir)
   end
 end
 
-function UI:note_flash(track)
-  self.flash[track] = 4
+function UI:note_flash(track_idx)
+  self.flash[track_idx] = 4
 end
 
 function UI:drum_voice_flash(voice)
   if voice >= 0 and voice < 8 then
     self.drum_flash[voice + 1] = 4
-  end
-end
-
--- Draw a small wireframe 3D pyramid
-function UI:draw_pyramid()
-  local pos = self.pyramid_pos[self.page]
-  if not pos then return end
-
-  local cx, cy = pos[1], pos[2]
-  local size = 7
-  self.pyramid_rot = self.pyramid_rot + 0.03
-
-  local r = self.pyramid_rot
-  local cos_r = math.cos(r)
-  local sin_r = math.sin(r)
-
-  -- Apex (top of pyramid)
-  local ax, ay = cx, cy - size * 1.4
-
-  -- Base corners (rotated square base in pseudo-3D)
-  local base = {}
-  for i = 0, 3 do
-    local angle = (i * math.pi / 2) + r
-    local bx = math.cos(angle) * size
-    local bz = math.sin(angle) * size
-    -- Simple perspective: flatten z into y
-    local sx = cx + bx
-    local sy = cy + bz * 0.4
-    base[i + 1] = {sx, sy}
-  end
-
-  screen.level(2)
-
-  -- Draw base edges
-  for i = 1, 4 do
-    local j = (i % 4) + 1
-    screen.move(base[i][1], base[i][2])
-    screen.line(base[j][1], base[j][2])
-    screen.stroke()
-  end
-
-  -- Draw edges from base to apex
-  for i = 1, 4 do
-    screen.move(base[i][1], base[i][2])
-    screen.line(ax, ay)
-    screen.stroke()
   end
 end
 
@@ -154,6 +96,54 @@ function UI:decay_flash()
   end
   for i = 1, 8 do
     if self.drum_flash[i] > 0 then self.drum_flash[i] = self.drum_flash[i] - 1 end
+  end
+  self.anim_t = self.anim_t + 0.08
+  self.pyramid_rot = self.pyramid_rot + 0.03
+end
+
+-- ===== EYE CANDY =====
+
+-- Spinning 3D wireframe pyramid
+function UI:draw_pyramid()
+  local cx, cy = 118, 14
+  local size = 6
+  local r = self.pyramid_rot
+
+  local ax, ay = cx, cy - size * 1.4
+
+  local base = {}
+  for i = 0, 3 do
+    local angle = (i * math.pi / 2) + r
+    local bx = math.cos(angle) * size
+    local bz = math.sin(angle) * size
+    base[i + 1] = { cx + bx, cy + bz * 0.4 }
+  end
+
+  screen.level(2)
+  for i = 1, 4 do
+    local j = (i % 4) + 1
+    screen.move(base[i][1], base[i][2])
+    screen.line(base[j][1], base[j][2])
+    screen.stroke()
+    screen.move(base[i][1], base[i][2])
+    screen.line(ax, ay)
+    screen.stroke()
+  end
+end
+
+-- Sine/cosine Lissajous eye candy
+function UI:draw_lissajous()
+  local cx, cy = 108, 14
+  local rx, ry = 8, 5
+  local t = self.anim_t
+
+  screen.level(1)
+  for i = 0, 30 do
+    local angle = (i / 30) * math.pi * 2
+    local x = cx + math.sin(angle * 3 + t) * rx
+    local y = cy + math.cos(angle * 2 + t * 0.7) * ry
+    screen.pixel(x, y)
+    screen.fill()
   end
 end
 
@@ -173,7 +163,7 @@ function UI:draw()
   -- Page indicator dots
   for i = 1, 5 do
     screen.level(i == self.page and 15 or 2)
-    screen.rect(103 + (i - 1) * 5, 1, 3, 3)
+    screen.rect(88 + (i - 1) * 5, 1, 3, 3)
     screen.fill()
   end
 
@@ -196,33 +186,50 @@ function UI:draw()
     self:draw_library()
   end
 
-  -- Spinning pyramid on every page
+  -- Eye candy
+  self:draw_lissajous()
   self:draw_pyramid()
 
   screen.update()
 end
 
 function UI:draw_mute_overlay()
+  local tc = self.seq:track_count()
+  if tc == 0 then
+    screen.level(4)
+    screen.move(64, 35)
+    screen.text_center("No tracks loaded")
+    screen.update()
+    return
+  end
+
   screen.level(15)
   screen.move(64, 12)
   screen.text_center("MUTE SELECT")
 
-  for i, name in ipairs(TRACK_NAMES) do
-    local y = 18 + (i - 1) * 12
-    local selected = (self.mute_cursor == i)
-    local muted = self.seq.mute[name]
+  local visible = math.min(tc, 4)
+  local scroll = math.max(0, self.mute_cursor - visible)
+
+  for i = 1, visible do
+    local idx = scroll + i
+    if idx > tc then break end
+    local track = self.seq.tracks[idx]
+    local y = 14 + (i - 1) * 12
+    local selected = (self.mute_cursor == idx)
 
     screen.level(selected and 15 or 5)
-    screen.move(20, y + 8)
-    screen.text(string.upper(name))
+    screen.move(4, y + 8)
+    local label = TrackAssign.role_label(track.role) .. " " .. track.name
+    if #label > 16 then label = label:sub(1, 15) .. "." end
+    screen.text(label)
 
-    screen.level(muted and 15 or 3)
-    screen.move(80, y + 8)
-    screen.text(muted and "MUTED" or "on")
+    screen.level(track.mute and 15 or 3)
+    screen.move(100, y + 8)
+    screen.text(track.mute and "MUTED" or "on")
 
     if selected then
       screen.level(8)
-      screen.rect(16, y, 100, 11)
+      screen.rect(2, y, 124, 11)
       screen.stroke()
     end
   end
@@ -233,7 +240,6 @@ function UI:draw_mute_overlay()
 end
 
 function UI:draw_play()
-  -- Song name
   local song = self.queue:current()
   screen.level(15)
   screen.move(0, 18)
@@ -255,7 +261,7 @@ function UI:draw_play()
 
   -- Play state
   screen.level(15)
-  screen.move(80, 28)
+  screen.move(70, 28)
   screen.text(self.seq.playing and "> PLAY" or "  STOP")
 
   -- Progress bar
@@ -270,113 +276,127 @@ function UI:draw_play()
   screen.rect(0, 33, math.floor(128 * progress), 4)
   screen.fill()
 
-  -- Time
+  -- Time + queue position
   screen.level(6)
   screen.move(0, 45)
   screen.text(format_time(self.seq.elapsed) .. " / " .. format_time(self.seq.duration))
 
-  -- Queue position
   if self.queue:count() > 0 then
     screen.level(4)
     screen.move(90, 45)
     screen.text(self.queue.position .. "/" .. self.queue:count())
   end
 
-  -- Track activity indicators with mute status
-  for i, name in ipairs(TRACK_NAMES) do
-    local x = (i - 1) * 32
-    local muted = self.seq.mute[name]
+  -- Track activity - show up to 8 tracks
+  local tc = math.min(self.seq:track_count(), 8)
+  if tc > 0 then
+    local w = math.floor(124 / tc)
+    for i = 1, tc do
+      local track = self.seq.tracks[i]
+      local x = (i - 1) * w
+      local lit = self.flash[i] and self.flash[i] > 0
 
-    -- Label
-    screen.level(muted and 2 or (self.flash[name] > 0 and 15 or 6))
-    screen.move(x + 4, 56)
-    screen.text(TRACK_LABELS[i])
+      -- Label
+      screen.level(track.mute and 2 or (lit and 15 or 6))
+      screen.move(x + 1, 55)
+      screen.text(TrackAssign.role_label(track.role):sub(1, 1))
 
-    -- Mute indicator
-    if muted then
-      screen.level(2)
-      screen.move(x + 14, 56)
-      screen.text("M")
+      -- Activity bar
+      if track.mute then
+        screen.level(1)
+      elseif track.output == "off" then
+        screen.level(0)
+      else
+        screen.level(lit and 12 or 2)
+      end
+      screen.rect(x, 57, w - 2, 4)
+      screen.fill()
     end
-
-    -- Activity bar
-    if muted then
-      screen.level(1)
-    else
-      screen.level(self.flash[name] > 0 and 12 or 2)
-    end
-    screen.rect(x, 58, 28, 4)
-    screen.fill()
   end
 end
 
 function UI:draw_tracks()
-  local roles = { "bass", "chords", "lead" }
-  local info = self.seq:get_track_info()
+  local tc = self.seq:track_count()
+  if tc == 0 then
+    screen.level(4)
+    screen.move(64, 35)
+    screen.text_center("No song loaded")
+    return
+  end
 
-  for i, role in ipairs(roles) do
-    local y = 10 + (i - 1) * 14
-    local selected = (self.track_cursor == i)
-    local muted = self.seq.mute[role]
+  -- Header
+  screen.level(4)
+  screen.move(0, 14)
+  screen.text("ROLE  NAME       OUT    OCT")
 
-    -- Role name (dim if muted)
-    screen.level(muted and 3 or (selected and 15 or 5))
+  local visible = 4
+  for i = 1, visible do
+    local idx = self.track_scroll + i
+    if idx > tc then break end
+
+    local track = self.seq.tracks[idx]
+    local y = 14 + i * 11
+    local selected = (self.track_cursor == idx)
+    local muted = track.mute
+
+    -- Role
+    screen.level(muted and 3 or (selected and 15 or 6))
     screen.move(0, y + 6)
-    local label = string.upper(role:sub(1, 1)) .. role:sub(2)
-    screen.text(muted and (label .. " M") or label)
+    screen.text(TrackAssign.role_label(track.role))
 
-    -- Source channel
-    screen.level(selected and 10 or 4)
-    screen.move(46, y + 6)
-    local src = info[role].ch and ("s:" .. info[role].ch) or "---"
-    screen.text(src)
+    -- Name (truncated)
+    screen.level(muted and 3 or (selected and 12 or 5))
+    screen.move(22, y + 6)
+    local name = track.name
+    if #name > 8 then name = name:sub(1, 7) .. "." end
+    screen.text(name)
 
-    -- Output channels
+    -- Output
     screen.level(selected and self.track_field == 1 and 15 or 6)
     screen.move(72, y + 6)
-    local chs = self.seq.out_channels[role] or {1}
-    local ch_str
-    if #chs == 16 then
-      ch_str = "ALL"
-    elseif #chs == 2 then
-      ch_str = chs[1] .. "+" .. chs[2]
+    local out_str
+    if track.output == "off" then
+      out_str = "OFF"
+    elseif track.output == "internal" then
+      out_str = "DRM"
+    elseif #track.out_channels == 16 then
+      out_str = "ALL"
+    elseif #track.out_channels == 2 then
+      out_str = track.out_channels[1] .. "+" .. track.out_channels[2]
     else
-      ch_str = tostring(chs[1])
+      out_str = "ch" .. track.out_channels[1]
     end
-    screen.text("ch:" .. ch_str)
+    screen.text(out_str)
 
     -- Octave
     screen.level(selected and self.track_field == 2 and 15 or 6)
     screen.move(104, y + 6)
-    local oct = self.seq.octave[role] or 0
-    screen.text(oct >= 0 and "+" .. oct or tostring(oct))
+    if track.output ~= "internal" then
+      local oct = track.octave or 0
+      screen.text(oct >= 0 and "+" .. oct or tostring(oct))
+    end
+
+    -- Mute indicator
+    if muted then
+      screen.level(3)
+      screen.move(120, y + 6)
+      screen.text("M")
+    end
   end
 
-  -- Drum row
-  local y = 10 + 3 * 14
-  local selected = (self.track_cursor == 4)
-  local muted = self.seq.mute.drum
-  screen.level(muted and 3 or (selected and 15 or 5))
-  screen.move(0, y + 6)
-  screen.text(muted and "Drum M" or "Drum")
-
-  screen.level(selected and 10 or 4)
-  screen.move(46, y + 6)
-  local drum_info = info.drum
-  screen.text(drum_info.ch and ("s:" .. drum_info.ch) or "---")
-
-  screen.level(selected and 15 or 6)
-  screen.move(72, y + 6)
-  screen.text("kit:" .. KIT_NAMES[self.state.kit or 1])
+  -- Scroll indicator
+  if tc > visible then
+    screen.level(3)
+    screen.move(125, 62)
+    screen.text(self.track_scroll + 1 .. "-" .. math.min(self.track_scroll + visible, tc) .. "/" .. tc)
+  end
 end
 
 function UI:draw_drums()
-  -- Kit name
   screen.level(self.drum_cursor == 1 and 15 or 6)
   screen.move(0, 14)
   screen.text("Kit: " .. KIT_NAMES[self.state.kit or 1])
 
-  -- Filter
   screen.level(self.drum_cursor == 2 and 15 or 6)
   screen.move(0, 24)
   local freq_display
@@ -389,23 +409,19 @@ function UI:draw_drums()
   end
   screen.text("LPF:" .. freq_display)
 
-  -- Resonance
   screen.level(self.drum_cursor == 3 and 15 or 6)
   screen.move(70, 24)
   screen.text("Res:" .. string.format("%.1f", self.filter_res))
 
-  -- Random amount
   screen.level(self.drum_cursor == 4 and 15 or 6)
   screen.move(0, 34)
   local rnd_pct = math.floor(self.random_amt * 100)
   screen.text("Rnd:" .. rnd_pct .. "%")
 
-  -- Keep indicator
   screen.level(3)
   screen.move(55, 34)
   screen.text("K2:dice K3:keep")
 
-  -- 8 drum voices grid
   for i = 1, 8 do
     local x = ((i - 1) % 4) * 32
     local y = 38 + math.floor((i - 1) / 4) * 13
@@ -501,10 +517,9 @@ end
 -- ===== INPUT HANDLING =====
 
 function UI:enc(n, d)
-  -- K1 held: mute mode
   if self.k1_held then
     if n == 2 then
-      self.mute_cursor = util.clamp(self.mute_cursor + d, 1, 4)
+      self.mute_cursor = util.clamp(self.mute_cursor + d, 1, math.max(1, self.seq:track_count()))
     end
     return
   end
@@ -536,28 +551,33 @@ function UI:enc_play(n, d)
 end
 
 function UI:enc_tracks(n, d)
+  local tc = self.seq:track_count()
+  if tc == 0 then return end
+
   if n == 2 then
-    self.track_cursor = util.clamp(self.track_cursor + d, 1, 4)
+    self.track_cursor = util.clamp(self.track_cursor + d, 1, tc)
+    -- Auto-scroll
+    if self.track_cursor > self.track_scroll + 4 then
+      self.track_scroll = self.track_cursor - 4
+    elseif self.track_cursor <= self.track_scroll then
+      self.track_scroll = self.track_cursor - 1
+    end
   elseif n == 3 then
-    if self.track_cursor <= 3 then
-      local role = ({"bass", "chords", "lead"})[self.track_cursor]
-      if self.track_field == 1 then
-        -- Adjust primary channel
-        local chs = self.seq.out_channels[role] or {1}
-        local ch = chs[1] + d
+    local track = self.seq.tracks[self.track_cursor]
+    if not track then return end
+
+    if self.track_field == 1 then
+      -- Adjust primary output channel
+      if track.output == "midi" and #track.out_channels < 16 then
+        local ch = track.out_channels[1] + d
         ch = util.clamp(ch, 1, 16)
-        if #chs >= 2 then
-          self.seq.out_channels[role] = {ch, chs[2]}
-        else
-          self.seq.out_channels[role] = {ch}
-        end
-      elseif self.track_field == 2 then
-        local oct = (self.seq.octave[role] or 0) + d
-        self.seq.octave[role] = util.clamp(oct, -3, 3)
+        track.out_channels[1] = ch
       end
-    else
-      self.state.kit = util.clamp((self.state.kit or 1) + d, 1, 4)
-      engine.kit(self.state.kit - 1)
+    elseif self.track_field == 2 then
+      -- Adjust octave
+      if track.output ~= "internal" then
+        track.octave = util.clamp((track.octave or 0) + d, -3, 3)
+      end
     end
   end
 end
@@ -619,7 +639,6 @@ function UI:enc_library(n, d)
 end
 
 function UI:key(n, z)
-  -- K1 hold tracking
   if n == 1 then
     self.k1_held = (z == 1)
     return
@@ -627,11 +646,9 @@ function UI:key(n, z)
 
   if z ~= 1 then return end
 
-  -- K1 held: mute mode
   if self.k1_held then
     if n == 3 then
-      local track = TRACK_NAMES[self.mute_cursor]
-      self.seq:toggle_mute(track)
+      self.seq:toggle_mute(self.mute_cursor)
     end
     return
   end
@@ -663,36 +680,19 @@ end
 
 function UI:key_tracks(n)
   if n == 2 then
-    if self.track_cursor <= 3 then
-      self.track_field = self.track_field == 1 and 2 or 1
-    end
+    -- Cycle field: output ch -> octave -> output mode
+    self.track_field = (self.track_field % 3) + 1
   elseif n == 3 then
-    local roles = { "bass", "chords", "lead", "drum" }
-    local role = roles[self.track_cursor]
-    local available = self.seq:get_available_channels()
-    if #available > 0 then
-      local current = self.seq.assignment and self.seq.assignment[role] and self.seq.assignment[role].ch
-      local next_idx = 1
-      for i, ch in ipairs(available) do
-        if ch == current then
-          next_idx = (i % #available) + 1
-          break
-        end
-      end
-      self.seq:set_source_channel(role, available[next_idx])
-    end
+    -- Cycle output mode for selected track
+    self.seq:cycle_output(self.track_cursor)
   end
 end
 
 function UI:key_drums(n)
   if n == 2 then
-    -- Roll the dice: generate new random offsets
     engine.randomize()
   elseif n == 3 then
-    -- Keep: bake current randomization into kit, reset amount to 0
     engine.random_keep()
-    -- Amount stays but offsets are now baked in
-    -- This makes the current sound the new baseline
   end
 end
 

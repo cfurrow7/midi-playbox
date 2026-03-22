@@ -1,13 +1,14 @@
 -- MIDI JUKEBOX
--- 4-track MIDI song player with built-in drum machine
--- 3 synth tracks (bass/chords/lead) -> MIDI out
--- 1 drum track -> internal synthesized drums or external (KO II)
+-- Dynamic track MIDI song player with built-in drum machine
+-- Auto-assigns MIDI channels to roles (bass/chord/lead/drum/fx)
+-- Drum tracks -> internal synthesized drums (808/707/606/DrumTraks)
+-- Synth tracks -> MIDI out to hardware
 -- AKAI MIDIMIX support for hands-on control
 --
 -- E1: page select | E2/E3: context-sensitive
 -- K2: play/stop (page 1) | K3: restart (page 1)
 --
--- v1.0 @clf
+-- v1.1 @clf
 
 engine.name = "DrumBox"
 
@@ -63,8 +64,8 @@ function init()
   engine.kit(0)  -- 808
 
   -- Sequencer callbacks
-  seq.on_note = function(track, note, vel, drum_voice)
-    ui:note_flash(track)
+  seq.on_note = function(track_idx, note, vel, drum_voice)
+    ui:note_flash(track_idx)
     if drum_voice then
       ui:drum_voice_flash(drum_voice)
     end
@@ -91,38 +92,10 @@ function init()
     midimix:connect(val)
   end)
 
-  params:add_number("bass_ch1", "Bass Ch 1", 1, 16, 1)
-  params:set_action("bass_ch1", function(val) update_channels("bass", val, params:get("bass_ch2")) end)
-
-  params:add_number("bass_ch2", "Bass Ch 2 (0=off)", 0, 16, 0)
-  params:set_action("bass_ch2", function(val) update_channels("bass", params:get("bass_ch1"), val) end)
-
-  params:add_number("chords_ch1", "Chords Ch 1", 1, 16, 2)
-  params:set_action("chords_ch1", function(val) update_channels("chords", val, params:get("chords_ch2")) end)
-
-  params:add_number("chords_ch2", "Chords Ch 2 (0=off)", 0, 16, 0)
-  params:set_action("chords_ch2", function(val) update_channels("chords", params:get("chords_ch1"), val) end)
-
-  params:add_number("lead_ch1", "Lead Ch 1", 1, 16, 3)
-  params:set_action("lead_ch1", function(val) update_channels("lead", val, params:get("lead_ch2")) end)
-
-  params:add_number("lead_ch2", "Lead Ch 2 (0=off)", 0, 16, 0)
-  params:set_action("lead_ch2", function(val) update_channels("lead", params:get("lead_ch1"), val) end)
-
   params:add_option("drum_kit", "Drum Kit", {"808", "707", "606", "DrumTraks"}, 1)
   params:set_action("drum_kit", function(val)
     state.kit = val
     engine.kit(val - 1)
-  end)
-
-  params:add_option("drum_output", "Drum Output", {"Internal", "MIDI (KO II)"}, 1)
-  params:set_action("drum_output", function(val)
-    seq.drum_mode = val == 1 and "internal" or "midi"
-  end)
-
-  params:add_number("drum_midi_ch", "Drum MIDI Ch", 1, 16, 10)
-  params:set_action("drum_midi_ch", function(val)
-    seq.drum_midi_ch = val
   end)
 
   -- ===== MIDIMIX SETUP =====
@@ -136,12 +109,12 @@ function init()
     while true do
       clock.sleep(1/10)
       ui:decay_flash()
-      midimix:update_leds(seq.mute)
+      midimix:update_leds(seq.tracks)
       redraw()
     end
   end)
 
-  print("MIDI JUKEBOX v0.2 loaded")
+  print("MIDI JUKEBOX v1.1 loaded")
   print("MIDI dir: " .. MIDI_DIR)
   print("Files found: " .. #ui.lib_files)
 end
@@ -150,59 +123,46 @@ function setup_midimix()
   -- Connect MIDIMIX (default device 2, configurable via params)
   midimix:connect(2)
 
-  -- Faders 1-4: velocity scaling (down = quieter notes, 0 = silent)
-  midimix.on_velocity = function(track, vel)
-    print("FADER " .. track .. " = " .. string.format("%.2f", vel))
-    seq.velocity_scale[track] = vel
-    if track == "drum" then
+  -- Faders 1-8: velocity scaling per track
+  midimix.on_velocity = function(track_idx, vel)
+    local track = seq.tracks[track_idx]
+    if not track then return end
+    track.velocity_scale = vel
+    -- Also set engine amp for internal drum tracks
+    if track.output == "internal" then
       engine.amp(vel)
     end
   end
 
-  -- Knob Row 1 (1-3): octave, (4): kit
-  midimix.on_octave = function(track, octave)
-    seq.octave[track] = octave
+  -- Knob Row 1 (1-8): octave per track
+  midimix.on_octave = function(track_idx, octave)
+    local track = seq.tracks[track_idx]
+    if not track then return end
+    if track.output ~= "internal" then
+      track.octave = octave
+    end
   end
 
-  midimix.on_kit = function(kit_index)
-    state.kit = kit_index
-    engine.kit(kit_index - 1)
-    params:set("drum_kit", kit_index)
-  end
-
-  -- Knob Row 2 (4): drum filter
+  -- Knob Row 2 (8): drum filter
   midimix.on_filter = function(freq)
     ui.filter_freq = freq
     engine.lpf(freq)
   end
 
-  -- Knob Row 3 (4): drum random amount
+  -- Knob Row 3 (8): drum random amount
   midimix.on_random_amt = function(amt)
     ui.random_amt = amt
     engine.random_amt(amt)
   end
 
-  -- Mute buttons: toggle track mute
-  midimix.on_mute_toggle = function(track)
-    seq:toggle_mute(track)
+  -- Mute buttons: toggle track mute by index
+  midimix.on_mute_toggle = function(track_idx)
+    seq:toggle_mute(track_idx)
   end
 
-  -- Rec buttons 1-4: toggle all-channel broadcast
-  midimix.on_all_toggle = function(track)
-    local chs = seq.out_channels[track] or {1}
-    if #chs == 16 then
-      -- Turn off ALL mode, go back to channel 1
-      seq.out_channels[track] = {1}
-      print(track .. " -> ch 1")
-    else
-      set_all_channels(track)
-      print(track .. " -> ALL channels")
-    end
-  end
-
-  -- Master fader: disabled
-  midimix.on_bpm = function(bpm)
-    seq:set_bpm(bpm)
+  -- Rec buttons: toggle all-channel broadcast
+  midimix.on_all_toggle = function(track_idx)
+    seq:set_all_channels(track_idx)
   end
 
   -- Bank buttons: prev/next song
@@ -218,21 +178,6 @@ function setup_midimix()
   end
 end
 
-function update_channels(track, ch1, ch2)
-  if ch2 and ch2 > 0 then
-    seq.out_channels[track] = {ch1, ch2}
-  else
-    seq.out_channels[track] = {ch1}
-  end
-end
-
--- Set a track to broadcast to all 16 MIDI channels
-function set_all_channels(track)
-  local chs = {}
-  for i = 1, 16 do chs[i] = i end
-  seq.out_channels[track] = chs
-end
-
 function load_current()
   local song = queue:current()
   if not song then return end
@@ -240,7 +185,7 @@ function load_current()
   seq:stop()
   local ok, err = seq:load(song.file)
   if ok then
-    print("Loaded: " .. song.name .. " (" .. seq:get_bpm() .. " BPM)")
+    print("Loaded: " .. song.name .. " (" .. seq:get_bpm() .. " BPM, " .. seq:track_count() .. " tracks)")
     seq:play()
   else
     print("Error loading " .. song.name .. ": " .. (err or "unknown"))

@@ -1,4 +1,5 @@
--- track_assign.lua: Auto-assign MIDI file channels to roles (bass, chords, lead, drum)
+-- track_assign.lua: Auto-assign MIDI file channels to roles
+-- Dynamic track count - creates a track per active channel
 -- Ported from Play My Synths logic
 
 local TrackAssign = {}
@@ -9,27 +10,27 @@ local role_patterns = {
   bass = { "bass" },
   lead = { "lead", "melody", "solo", "vocal", "voice", "flute", "trumpet", "sax", "whistle" },
   chord = { "chord", "pad", "organ", "piano", "key", "string", "acoustic", "rhythm", "guitar", "harp" },
+  fx = { "fx", "effect", "noise", "texture", "arp" },
 }
 
 -- GM drum note to voice mapping (8 voices)
 -- 0=kick, 1=snare, 2=chh, 3=ohh, 4=clap, 5=ltom, 6=htom, 7=crash
 TrackAssign.gm_drum_map = {
-  [35] = 0, [36] = 0,                       -- kick
-  [38] = 1, [40] = 1, [37] = 1,             -- snare + rimshot
-  [42] = 2, [44] = 2,                       -- closed hh
-  [46] = 3,                                 -- open hh
-  [39] = 4, [54] = 4,                       -- clap
-  [41] = 5, [43] = 5, [45] = 5,             -- low tom
-  [47] = 6, [48] = 6, [50] = 6,             -- high tom
-  [49] = 7, [51] = 3, [52] = 7,             -- crash + ride(->ohh)
-  [53] = 3, [55] = 7, [56] = 7, [57] = 7,  -- ride bell + cowbell + crash2
-  [59] = 3,                                 -- ride 2
+  [35] = 0, [36] = 0,
+  [38] = 1, [40] = 1, [37] = 1,
+  [42] = 2, [44] = 2,
+  [46] = 3,
+  [39] = 4, [54] = 4,
+  [41] = 5, [43] = 5, [45] = 5,
+  [47] = 6, [48] = 6, [50] = 6,
+  [49] = 7, [51] = 3, [52] = 7,
+  [53] = 3, [55] = 7, [56] = 7, [57] = 7,
+  [59] = 3,
 }
 
--- Extend drum map for remaining GM percussion
 for n = 58, 81 do
   if not TrackAssign.gm_drum_map[n] then
-    TrackAssign.gm_drum_map[n] = 7  -- misc percussion -> crash/perc voice
+    TrackAssign.gm_drum_map[n] = 7
   end
 end
 
@@ -47,7 +48,7 @@ local function guess_role(name)
   return nil
 end
 
--- Guess role from note range (heuristic)
+-- Guess role from note range
 local function guess_role_from_range(ch_info)
   if ch_info.max_note <= 55 then
     return "bass"
@@ -58,88 +59,64 @@ local function guess_role_from_range(ch_info)
   end
 end
 
--- Auto-assign channels to 4 tracks
--- Returns: { bass = { ch=N, name=S }, chords = {...}, lead = {...}, drum = { ch=N } }
--- ch_data is the parsed.channels table from midi_parser
-function TrackAssign.auto_assign(ch_data)
-  local assignment = {
-    bass = nil,
-    chords = nil,
-    lead = nil,
-    drum = nil
-  }
+-- Build track list from parsed MIDI channel data
+-- Returns array of track objects sorted by note count (most first)
+function TrackAssign.build_tracks(ch_data)
+  local tracks = {}
 
-  -- Channel 10 is always drums (GM standard)
-  if ch_data[10] then
-    assignment.drum = { ch = 10, name = ch_data[10].name or "Drums" }
-  end
-
-  -- Sort remaining channels by note count (most notes first)
-  local sorted = {}
+  -- Create a track per active channel
   for ch, info in pairs(ch_data) do
-    if ch ~= 10 then
-      table.insert(sorted, { ch = ch, info = info })
-    end
-  end
-  table.sort(sorted, function(a, b) return a.info.note_count > b.info.note_count end)
-
-  -- First pass: assign by track name
-  local used = {}
-  for _, entry in ipairs(sorted) do
-    local role = guess_role(entry.info.name)
-    if role and role ~= "drum" and not assignment[role == "chord" and "chords" or role] then
-      local key = role == "chord" and "chords" or role
-      assignment[key] = { ch = entry.ch, name = entry.info.name or ("Ch " .. entry.ch) }
-      used[entry.ch] = true
-    end
-  end
-
-  -- Second pass: assign by note range
-  for _, entry in ipairs(sorted) do
-    if not used[entry.ch] then
-      local role = guess_role_from_range(entry.info)
-      local key = role == "chord" and "chords" or role
-      if not assignment[key] then
-        assignment[key] = { ch = entry.ch, name = entry.info.name or ("Ch " .. entry.ch) }
-        used[entry.ch] = true
+    local role
+    if ch == 10 then
+      role = "drum"
+    else
+      role = guess_role(info.name)
+      if not role then
+        role = guess_role_from_range(info)
       end
     end
+
+    table.insert(tracks, {
+      source_ch = ch,
+      name = info.name or ("Ch " .. ch),
+      role = role or "chord",
+      output = (ch == 10) and "internal" or "midi",  -- drums default to internal engine
+      out_channels = {ch},  -- default: same channel out
+      octave = 0,
+      velocity_scale = 1.0,
+      mute = false,
+      note_count = info.note_count,
+      min_note = info.min_note,
+      max_note = info.max_note,
+    })
   end
 
-  -- Third pass: fill remaining slots with whatever's left
-  local slots = { "chords", "lead", "bass" }
-  for _, entry in ipairs(sorted) do
-    if not used[entry.ch] then
-      for _, slot in ipairs(slots) do
-        if not assignment[slot] then
-          assignment[slot] = { ch = entry.ch, name = entry.info.name or ("Ch " .. entry.ch) }
-          used[entry.ch] = true
-          break
-        end
-      end
-    end
-  end
+  -- Sort by note count (most notes first, like PMS)
+  table.sort(tracks, function(a, b)
+    -- Drums always last
+    if a.role == "drum" and b.role ~= "drum" then return false end
+    if a.role ~= "drum" and b.role == "drum" then return true end
+    return a.note_count > b.note_count
+  end)
 
-  -- If no drum channel found, check for channel with drum-like names
-  if not assignment.drum then
-    for _, entry in ipairs(sorted) do
-      if not used[entry.ch] then
-        local role = guess_role(entry.info.name)
-        if role == "drum" then
-          assignment.drum = { ch = entry.ch, name = entry.info.name or ("Ch " .. entry.ch) }
-          used[entry.ch] = true
-          break
-        end
-      end
-    end
-  end
-
-  return assignment
+  return tracks
 end
 
 -- Map a GM drum note to a drum voice (0-7), or nil if not mapped
 function TrackAssign.map_drum_note(note)
   return TrackAssign.gm_drum_map[note]
+end
+
+-- Short role label for display
+function TrackAssign.role_label(role)
+  local labels = {
+    drum = "DRM",
+    bass = "BAS",
+    lead = "LED",
+    chord = "CHD",
+    fx = "FX",
+  }
+  return labels[role] or "???"
 end
 
 return TrackAssign
