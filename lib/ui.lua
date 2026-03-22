@@ -1,4 +1,4 @@
--- ui.lua: Screen drawing and input handling for MIDI PLAYBOX
+-- ui.lua: Screen drawing and input handling for MIDI JUKEBOX
 -- 5 pages: Now Playing, Track Setup, Drums, Queue, Library
 -- 128x64 screen, 3 encoders (E1/E2/E3), 3 keys (K1/K2/K3)
 -- Mutes: hold K1 + E2 to select track, K1 + K3 to toggle mute (any page)

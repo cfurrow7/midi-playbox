@@ -1,4 +1,4 @@
-// Engine_DrumBox: 8-voice synthesized drum machine for MIDI PLAYBOX
+// Engine_DrumBox: 8-voice synthesized drum machine for MIDI JUKEBOX
 // Kits: 808, 707, 606, DrumTraks (all synthesis, no samples needed)
 // Global LPF filter on drum output
 

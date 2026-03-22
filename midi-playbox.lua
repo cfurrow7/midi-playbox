@@ -1,13 +1,13 @@
--- MIDI PLAYBOX
+-- MIDI JUKEBOX
 -- 4-track MIDI song player with built-in drum machine
 -- 3 synth tracks (bass/chords/lead) -> MIDI out
--- 1 drum track -> internal synthesized drums (808/707/606/DrumTraks)
+-- 1 drum track -> internal synthesized drums or external (KO II)
 -- AKAI MIDIMIX support for hands-on control
 --
 -- E1: page select | E2/E3: context-sensitive
 -- K2: play/stop (page 1) | K3: restart (page 1)
 --
--- v0.2 @clf
+-- v1.0 @clf
 
 engine.name = "DrumBox"
 
@@ -79,7 +79,7 @@ function init()
   end
 
   -- ===== PARAMS =====
-  params:add_separator("MIDI PLAYBOX")
+  params:add_separator("MIDI JUKEBOX")
 
   params:add_number("midi_out_device", "MIDI Out Device", 1, 16, 1)
   params:set_action("midi_out_device", function(val)
@@ -141,7 +141,7 @@ function init()
     end
   end)
 
-  print("MIDI PLAYBOX v0.2 loaded")
+  print("MIDI JUKEBOX v0.2 loaded")
   print("MIDI dir: " .. MIDI_DIR)
   print("Files found: " .. #ui.lib_files)
 end

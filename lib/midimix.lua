@@ -1,4 +1,4 @@
--- midimix.lua: Akai MIDIMIX controller for MIDI PLAYBOX
+-- midimix.lua: Akai MIDIMIX controller for MIDI JUKEBOX
 -- Adapted from midi-sines midimix driver
 --
 -- LAYOUT (channels 1-4 used, 5-8 spare):
