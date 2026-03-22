@@ -187,22 +187,6 @@ function setup_midimix()
     seq:toggle_mute(track)
   end
 
-  -- Solo buttons: cycle source MIDI channel
-  midimix.on_source_cycle = function(track)
-    local available = seq:get_available_channels()
-    if #available > 0 then
-      local current = seq.assignment and seq.assignment[track] and seq.assignment[track].ch
-      local next_idx = 1
-      for i, ch in ipairs(available) do
-        if ch == current then
-          next_idx = (i % #available) + 1
-          break
-        end
-      end
-      seq:set_source_channel(track, available[next_idx])
-    end
-  end
-
   -- Rec buttons 1-4: toggle all-channel broadcast
   midimix.on_all_toggle = function(track)
     local chs = seq.out_channels[track] or {1}

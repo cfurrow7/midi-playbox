@@ -53,7 +53,6 @@ function MidiMix.new()
   self.on_velocity = nil      -- function(track_name, velocity_0_to_1)
   self.on_octave = nil        -- function(track_name, octave)
   self.on_mute_toggle = nil   -- function(track_name)
-  self.on_source_cycle = nil  -- function(track_name)
   self.on_all_toggle = nil    -- function(track_name) toggle all-channel broadcast
   self.on_bpm = nil           -- function(bpm)
   self.on_prev_song = nil     -- function()
@@ -166,14 +165,6 @@ function MidiMix:handle_note(note)
   if mute_ch and mute_ch <= 4 then
     local track = TRACKS[mute_ch]
     if self.on_mute_toggle then self.on_mute_toggle(track) end
-    return
-  end
-
-  -- Solo buttons 1-4: cycle source channel
-  local solo_ch = self._solo_map[note]
-  if solo_ch and solo_ch <= 4 then
-    local track = TRACKS[solo_ch]
-    if self.on_source_cycle then self.on_source_cycle(track) end
     return
   end
 
