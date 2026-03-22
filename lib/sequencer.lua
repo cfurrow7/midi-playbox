@@ -23,11 +23,11 @@ function Sequencer.new()
   -- Track assignment
   self.assignment = nil       -- { bass={ch,name}, chords={ch,name}, lead={ch,name}, drum={ch,name} }
 
-  -- Output config (user-configurable MIDI channels)
+  -- Output config (user-configurable MIDI channels, up to 2 per track)
   self.out_channels = {
-    bass = 1,
-    chords = 2,
-    lead = 3,
+    bass = {1},
+    chords = {2},
+    lead = {3},
   }
 
   -- Drum output mode: "internal" = DrumBox engine, "midi" = MIDI out (e.g. KO II)
@@ -231,30 +231,32 @@ function Sequencer:route_event(event)
       end
     end
   else
-    -- Route to MIDI out
+    -- Route to MIDI out (supports multiple channels per track)
     if self.midi_out then
-      local out_ch = self.out_channels[track_name] or 1
+      local channels = self.out_channels[track_name] or {1}
       local note = event.note + (self.octave[track_name] or 0) * 12
       note = math.max(0, math.min(127, note))
 
       if event.type == "note_on" and event.velocity > 0 then
         local scale = self.velocity_scale[track_name] or 1.0
-        -- Fader at 0 = suppress note entirely
         if scale <= 0.01 then return end
         local scaled_vel = math.floor(event.velocity * scale)
         scaled_vel = math.max(1, math.min(127, scaled_vel))
-        self.midi_out:note_on(note, scaled_vel, out_ch)
-        table.insert(self.active_notes, { out_ch, note })
+        for _, out_ch in ipairs(channels) do
+          self.midi_out:note_on(note, scaled_vel, out_ch)
+          table.insert(self.active_notes, { out_ch, note })
+        end
         if self.on_note then
           self.on_note(track_name, note, scaled_vel)
         end
       elseif event.type == "note_off" or (event.type == "note_on" and event.velocity == 0) then
-        self.midi_out:note_off(note, 0, out_ch)
-        -- Remove from active notes
-        for i = #self.active_notes, 1, -1 do
-          if self.active_notes[i][1] == out_ch and self.active_notes[i][2] == note then
-            table.remove(self.active_notes, i)
-            break
+        for _, out_ch in ipairs(channels) do
+          self.midi_out:note_off(note, 0, out_ch)
+          for i = #self.active_notes, 1, -1 do
+            if self.active_notes[i][1] == out_ch and self.active_notes[i][2] == note then
+              table.remove(self.active_notes, i)
+              break
+            end
           end
         end
       end
@@ -270,9 +272,9 @@ function Sequencer:all_notes_off()
     self.active_notes = {}
     -- Also send all notes off CC on all used channels
     for _, role in ipairs({"bass", "chords", "lead"}) do
-      local ch = self.out_channels[role]
-      if ch then
-        self.midi_out:cc(123, 0, ch)  -- all notes off
+      local channels = self.out_channels[role] or {}
+      for _, ch in ipairs(channels) do
+        self.midi_out:cc(123, 0, ch)
       end
     end
   end
@@ -283,8 +285,10 @@ function Sequencer:toggle_mute(track_name)
     self.mute[track_name] = not self.mute[track_name]
     -- If muting a MIDI track, send all notes off on that channel
     if self.mute[track_name] and track_name ~= "drum" and self.midi_out then
-      local ch = self.out_channels[track_name]
-      if ch then self.midi_out:cc(123, 0, ch) end
+      local channels = self.out_channels[track_name] or {}
+      for _, ch in ipairs(channels) do
+        self.midi_out:cc(123, 0, ch)
+      end
     end
   end
 end

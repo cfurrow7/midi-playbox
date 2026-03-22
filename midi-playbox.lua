@@ -91,14 +91,23 @@ function init()
     midimix:connect(val)
   end)
 
-  params:add_number("bass_ch", "Bass MIDI Ch", 1, 16, 1)
-  params:set_action("bass_ch", function(val) seq.out_channels.bass = val end)
+  params:add_number("bass_ch1", "Bass Ch 1", 1, 16, 1)
+  params:set_action("bass_ch1", function(val) update_channels("bass", val, params:get("bass_ch2")) end)
 
-  params:add_number("chords_ch", "Chords MIDI Ch", 1, 16, 2)
-  params:set_action("chords_ch", function(val) seq.out_channels.chords = val end)
+  params:add_number("bass_ch2", "Bass Ch 2 (0=off)", 0, 16, 0)
+  params:set_action("bass_ch2", function(val) update_channels("bass", params:get("bass_ch1"), val) end)
 
-  params:add_number("lead_ch", "Lead MIDI Ch", 1, 16, 3)
-  params:set_action("lead_ch", function(val) seq.out_channels.lead = val end)
+  params:add_number("chords_ch1", "Chords Ch 1", 1, 16, 2)
+  params:set_action("chords_ch1", function(val) update_channels("chords", val, params:get("chords_ch2")) end)
+
+  params:add_number("chords_ch2", "Chords Ch 2 (0=off)", 0, 16, 0)
+  params:set_action("chords_ch2", function(val) update_channels("chords", params:get("chords_ch1"), val) end)
+
+  params:add_number("lead_ch1", "Lead Ch 1", 1, 16, 3)
+  params:set_action("lead_ch1", function(val) update_channels("lead", val, params:get("lead_ch2")) end)
+
+  params:add_number("lead_ch2", "Lead Ch 2 (0=off)", 0, 16, 0)
+  params:set_action("lead_ch2", function(val) update_channels("lead", params:get("lead_ch1"), val) end)
 
   params:add_option("drum_kit", "Drum Kit", {"808", "707", "606", "DrumTraks"}, 1)
   params:set_action("drum_kit", function(val)
@@ -210,6 +219,21 @@ function setup_midimix()
   midimix.on_next_song = function()
     advance_queue()
   end
+end
+
+function update_channels(track, ch1, ch2)
+  if ch2 and ch2 > 0 then
+    seq.out_channels[track] = {ch1, ch2}
+  else
+    seq.out_channels[track] = {ch1}
+  end
+end
+
+-- Set a track to broadcast to all 16 MIDI channels
+function set_all_channels(track)
+  local chs = {}
+  for i = 1, 16 do chs[i] = i end
+  seq.out_channels[track] = chs
 end
 
 function load_current()

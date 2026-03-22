@@ -269,10 +269,19 @@ function UI:draw_tracks()
     local src = info[role].ch and ("s:" .. info[role].ch) or "---"
     screen.text(src)
 
-    -- Output channel (editable)
+    -- Output channels
     screen.level(selected and self.track_field == 1 and 15 or 6)
     screen.move(72, y + 6)
-    screen.text("ch:" .. (self.seq.out_channels[role] or "?"))
+    local chs = self.seq.out_channels[role] or {1}
+    local ch_str
+    if #chs == 16 then
+      ch_str = "ALL"
+    elseif #chs == 2 then
+      ch_str = chs[1] .. "+" .. chs[2]
+    else
+      ch_str = tostring(chs[1])
+    end
+    screen.text("ch:" .. ch_str)
 
     -- Octave
     screen.level(selected and self.track_field == 2 and 15 or 6)
@@ -471,8 +480,15 @@ function UI:enc_tracks(n, d)
     if self.track_cursor <= 3 then
       local role = ({"bass", "chords", "lead"})[self.track_cursor]
       if self.track_field == 1 then
-        local ch = self.seq.out_channels[role] + d
-        self.seq.out_channels[role] = util.clamp(ch, 1, 16)
+        -- Adjust primary channel
+        local chs = self.seq.out_channels[role] or {1}
+        local ch = chs[1] + d
+        ch = util.clamp(ch, 1, 16)
+        if #chs >= 2 then
+          self.seq.out_channels[role] = {ch, chs[2]}
+        else
+          self.seq.out_channels[role] = {ch}
+        end
       elseif self.track_field == 2 then
         local oct = (self.seq.octave[role] or 0) + d
         self.seq.octave[role] = util.clamp(oct, -3, 3)
