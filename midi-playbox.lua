@@ -203,7 +203,20 @@ function setup_midimix()
     end
   end
 
-  -- Master fader: BPM
+  -- Rec buttons 1-4: toggle all-channel broadcast
+  midimix.on_all_toggle = function(track)
+    local chs = seq.out_channels[track] or {1}
+    if #chs == 16 then
+      -- Turn off ALL mode, go back to channel 1
+      seq.out_channels[track] = {1}
+      print(track .. " -> ch 1")
+    else
+      set_all_channels(track)
+      print(track .. " -> ALL channels")
+    end
+  end
+
+  -- Master fader: disabled
   midimix.on_bpm = function(bpm)
     seq:set_bpm(bpm)
   end

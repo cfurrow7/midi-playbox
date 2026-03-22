@@ -45,6 +45,19 @@ function UI.new(sequencer, queue, state)
   self.flash = { bass = 0, chords = 0, lead = 0, drum = 0 }
   self.drum_flash = { 0, 0, 0, 0, 0, 0, 0, 0 }  -- per-voice flash
 
+  -- Pyramid position per page (tucked into corners/gaps away from text)
+  -- Page 1 PLAY: right side near queue pos, page 2 TRACKS: far right
+  -- Page 3 DRUMS: top right, page 4 QUEUE: bottom right
+  -- Page 5 LIBRARY: bottom right
+  self.pyramid_pos = {
+    {115, 20},  -- PLAY: top right (above "> PLAY")
+    {118, 12},  -- TRACKS: top right corner
+    {118, 12},  -- DRUMS: top right corner
+    {115, 12},  -- QUEUE: top right
+    {115, 12},  -- LIBRARY: top right
+  }
+  self.pyramid_rot = 0  -- slow rotation angle
+
   return self
 end
 
@@ -86,6 +99,52 @@ end
 function UI:drum_voice_flash(voice)
   if voice >= 0 and voice < 8 then
     self.drum_flash[voice + 1] = 4
+  end
+end
+
+-- Draw a small wireframe 3D pyramid
+function UI:draw_pyramid()
+  local pos = self.pyramid_pos[self.page]
+  if not pos then return end
+
+  local cx, cy = pos[1], pos[2]
+  local size = 7
+  self.pyramid_rot = self.pyramid_rot + 0.03
+
+  local r = self.pyramid_rot
+  local cos_r = math.cos(r)
+  local sin_r = math.sin(r)
+
+  -- Apex (top of pyramid)
+  local ax, ay = cx, cy - size * 1.4
+
+  -- Base corners (rotated square base in pseudo-3D)
+  local base = {}
+  for i = 0, 3 do
+    local angle = (i * math.pi / 2) + r
+    local bx = math.cos(angle) * size
+    local bz = math.sin(angle) * size
+    -- Simple perspective: flatten z into y
+    local sx = cx + bx
+    local sy = cy + bz * 0.4
+    base[i + 1] = {sx, sy}
+  end
+
+  screen.level(2)
+
+  -- Draw base edges
+  for i = 1, 4 do
+    local j = (i % 4) + 1
+    screen.move(base[i][1], base[i][2])
+    screen.line(base[j][1], base[j][2])
+    screen.stroke()
+  end
+
+  -- Draw edges from base to apex
+  for i = 1, 4 do
+    screen.move(base[i][1], base[i][2])
+    screen.line(ax, ay)
+    screen.stroke()
   end
 end
 
@@ -136,6 +195,9 @@ function UI:draw()
   elseif self.page == 5 then
     self:draw_library()
   end
+
+  -- Spinning pyramid on every page
+  self:draw_pyramid()
 
   screen.update()
 end
