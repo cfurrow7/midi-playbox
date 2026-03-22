@@ -50,6 +50,11 @@ function UI.new(sequencer, queue, state)
   self.anim_t = 0
   self.pyramid_rot = 0
 
+  -- Reactive energy (driven by note density)
+  self.energy = 0          -- current smoothed energy 0-1
+  self.energy_peak = 0     -- peak hold for size burst
+  self.note_hits = 0       -- raw hit counter per frame
+
   return self
 end
 
@@ -82,6 +87,7 @@ end
 
 function UI:note_flash(track_idx)
   self.flash[track_idx] = 4
+  self.note_hits = self.note_hits + 1
 end
 
 function UI:drum_voice_flash(voice)
@@ -97,16 +103,28 @@ function UI:decay_flash()
   for i = 1, 8 do
     if self.drum_flash[i] > 0 then self.drum_flash[i] = self.drum_flash[i] - 1 end
   end
-  self.anim_t = self.anim_t + 0.08
-  self.pyramid_rot = self.pyramid_rot + 0.03
+  -- Energy smoothing: hits -> energy with fast attack, slow decay
+  local target = math.min(1.0, self.note_hits * 0.15)
+  if target > self.energy then
+    self.energy = self.energy + (target - self.energy) * 0.6  -- fast attack
+  else
+    self.energy = self.energy * 0.92  -- slow decay
+  end
+  self.energy_peak = math.max(self.energy, self.energy_peak * 0.95)
+  self.note_hits = 0
+
+  -- Animation speed scales with energy
+  self.anim_t = self.anim_t + 0.04 + self.energy * 0.2
+  self.pyramid_rot = self.pyramid_rot + 0.015 + self.energy * 0.08
 end
 
 -- ===== EYE CANDY =====
 
--- Spinning 3D wireframe pyramid
+-- Spinning 3D wireframe pyramid - size pulses with energy
 function UI:draw_pyramid()
   local cx, cy = 118, 14
-  local size = 6
+  local e = self.energy_peak
+  local size = 5 + e * 4
   local r = self.pyramid_rot
 
   local ax, ay = cx, cy - size * 1.4
@@ -119,7 +137,7 @@ function UI:draw_pyramid()
     base[i + 1] = { cx + bx, cy + bz * 0.4 }
   end
 
-  screen.level(2)
+  screen.level(math.floor(2 + e * 6))
   for i = 1, 4 do
     local j = (i % 4) + 1
     screen.move(base[i][1], base[i][2])
@@ -131,19 +149,48 @@ function UI:draw_pyramid()
   end
 end
 
--- Sine/cosine Lissajous eye candy
+-- Reactive Lissajous - size/speed/brightness driven by note energy
 function UI:draw_lissajous()
   local cx, cy = 108, 14
-  local rx, ry = 8, 5
+  local e = self.energy
+  local ep = self.energy_peak
   local t = self.anim_t
 
-  screen.level(1)
-  for i = 0, 30 do
-    local angle = (i / 30) * math.pi * 2
-    local x = cx + math.sin(angle * 3 + t) * rx
-    local y = cy + math.cos(angle * 2 + t * 0.7) * ry
+  -- Scale size with energy (4-14 range)
+  local rx = 4 + ep * 10
+  local ry = 3 + ep * 7
+
+  -- More points when busy
+  local points = 20 + math.floor(e * 40)
+
+  -- Brightness pulses with energy
+  local base_level = 1 + math.floor(e * 6)
+  screen.level(math.min(15, base_level))
+
+  -- Frequency ratios shift slightly with energy for variety
+  local fx = 3 + e * 0.5
+  local fy = 2 + e * 0.3
+
+  for i = 0, points do
+    local angle = (i / points) * math.pi * 2
+    local x = cx + math.sin(angle * fx + t) * rx
+    local y = cy + math.cos(angle * fy + t * 0.7) * ry
     screen.pixel(x, y)
     screen.fill()
+  end
+
+  -- Extra inner pattern when energy is high
+  if e > 0.3 then
+    screen.level(math.floor(e * 8))
+    local irx = rx * 0.5
+    local iry = ry * 0.5
+    for i = 0, 15 do
+      local angle = (i / 15) * math.pi * 2
+      local x = cx + math.sin(angle * 5 + t * 1.3) * irx
+      local y = cy + math.cos(angle * 3 + t * 0.9) * iry
+      screen.pixel(x, y)
+      screen.fill()
+    end
   end
 end
 
