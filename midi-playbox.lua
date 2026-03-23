@@ -186,6 +186,13 @@ function setup_midimix()
   midimix.on_next_song = function()
     advance_queue()
   end
+
+  -- SEND ALL button (above master fader) = PANIC
+  midimix.on_panic = function()
+    print("PANIC! All notes off")
+    seq:stop()
+    seq:all_notes_off()
+  end
 end
 
 function load_current()

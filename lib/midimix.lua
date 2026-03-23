@@ -28,6 +28,7 @@ local BANK_LEFT_NOTE = 25
 local BANK_RIGHT_NOTE = 26
 local BANK_LEFT_CC = 25
 local BANK_RIGHT_CC = 26
+local SEND_ALL_NOTE = 27  -- solo button above master fader = PANIC
 
 -- Scale CC value (0-127) to a range
 local function cc_to_range(val, min, max)
@@ -51,6 +52,7 @@ function MidiMix.new()
   self.on_next_song = nil     -- function()
   self.on_filter = nil        -- function(freq)
   self.on_resonance = nil     -- function(res)
+  self.on_panic = nil         -- function()  -- SEND ALL button = panic
 
   -- Build reverse lookup tables
   self._fader_map = {}
@@ -153,6 +155,12 @@ function MidiMix:handle_note(note)
   local rec_idx = self._rec_map[note]
   if rec_idx then
     if self.on_all_toggle then self.on_all_toggle(rec_idx) end
+    return
+  end
+
+  -- SEND ALL / solo above master = PANIC
+  if note == SEND_ALL_NOTE then
+    if self.on_panic then self.on_panic() end
     return
   end
 
