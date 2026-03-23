@@ -128,31 +128,41 @@ function setup_midimix()
     local track = seq.tracks[track_idx]
     if not track then return end
     track.velocity_scale = vel
-    -- Also set engine amp for internal drum tracks
     if track.output == "internal" then
       engine.amp(vel)
     end
   end
 
-  -- Knob Row 1 (1-8): octave per track
-  midimix.on_octave = function(track_idx, octave)
+  -- Knob Row 1 (1-8): MIDI output channel per track
+  midimix.on_channel = function(track_idx, ch)
     local track = seq.tracks[track_idx]
     if not track then return end
-    if track.output ~= "internal" then
-      track.octave = octave
+    if track.output == "midi" then
+      track.out_channels = {ch}
     end
   end
 
-  -- Knob Row 2 (8): drum filter
+  -- Knob Row 2 (1-7): Program Change per track
+  midimix.on_program_change = function(track_idx, pc)
+    local track = seq.tracks[track_idx]
+    if not track then return end
+    if track.output == "midi" and seq.midi_out then
+      for _, ch in ipairs(track.out_channels or {}) do
+        seq.midi_out:program_change(pc, ch)
+      end
+    end
+  end
+
+  -- Knob Row 2 (8): drum LPF filter
   midimix.on_filter = function(freq)
     ui.filter_freq = freq
     engine.lpf(freq)
   end
 
-  -- Knob Row 3 (8): drum random amount
-  midimix.on_random_amt = function(amt)
-    ui.random_amt = amt
-    engine.random_amt(amt)
+  -- Knob Row 3 (8): drum resonance
+  midimix.on_resonance = function(res)
+    ui.filter_res = res
+    engine.res(res)
   end
 
   -- Mute buttons: toggle track mute by index

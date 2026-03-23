@@ -1,13 +1,12 @@
 -- midimix.lua: Akai MIDIMIX controller for MIDI JUKEBOX
--- Adapted from midi-sines midimix driver
 --
 -- LAYOUT (channels 1-8 map to tracks 1-8):
---   Faders 1-8: track velocity (maps to track indices)
---   Knob Row 1 (1-8): octave per track (synth tracks only)
---   Knob Row 2 (8): drum LPF filter
---   Knob Row 3 (8): drum random amount
+--   Knob Row 1 (1-8): MIDI output channel per track
+--   Knob Row 2 (1-7): Program Change per track, (8): drum LPF filter
+--   Knob Row 3 (8): drum resonance
 --   Mute 1-8: track mute toggle
 --   Rec 1-8: toggle all-channel broadcast
+--   Faders 1-8: track velocity
 --   Bank Left/Right: prev/next song in queue
 --
 -- LEDs: mute buttons light when track is NOT muted
@@ -44,14 +43,14 @@ function MidiMix.new()
 
   -- Callbacks (set by main script) - all use track index (1-8)
   self.on_velocity = nil      -- function(track_idx, velocity_0_to_1)
-  self.on_octave = nil        -- function(track_idx, octave)
+  self.on_channel = nil       -- function(track_idx, midi_ch)
+  self.on_program_change = nil -- function(track_idx, pc_num)
   self.on_mute_toggle = nil   -- function(track_idx)
   self.on_all_toggle = nil    -- function(track_idx) toggle all-channel broadcast
   self.on_prev_song = nil     -- function()
   self.on_next_song = nil     -- function()
-  self.on_kit = nil           -- function(kit_index)  -- 1-4
   self.on_filter = nil        -- function(freq)
-  self.on_random_amt = nil    -- function(amount)  -- 0-1
+  self.on_resonance = nil     -- function(res)
 
   -- Build reverse lookup tables
   self._fader_map = {}
@@ -100,29 +99,34 @@ function MidiMix:handle_cc(cc, val)
     return
   end
 
-  -- Knob Row 1 (1-8): octave per track
+  -- Knob Row 1 (1-8): MIDI output channel per track
   local k1 = self._knob1_map[cc]
   if k1 then
-    local octave = cc_to_range(val, -3, 3)
-    if self.on_octave then self.on_octave(k1, octave) end
+    local ch = cc_to_range(val, 1, 16)
+    if self.on_channel then self.on_channel(k1, ch) end
     return
   end
 
-  -- Knob Row 2 (8): drum LPF filter
+  -- Knob Row 2 (1-7): Program Change per track, (8): drum LPF filter
   local k2 = self._knob2_map[cc]
-  if k2 and k2 == 8 then
-    -- Logarithmic mapping: 0=60Hz, 127=20kHz
-    local freq = 60 * math.pow(20000/60, val/127)
-    if val == 127 then freq = 20000 end
-    if self.on_filter then self.on_filter(freq) end
+  if k2 then
+    if k2 == 8 then
+      -- Logarithmic mapping: 0=60Hz, 127=20kHz
+      local freq = 60 * math.pow(20000/60, val/127)
+      if val == 127 then freq = 20000 end
+      if self.on_filter then self.on_filter(freq) end
+    else
+      -- Program Change 0-127
+      if self.on_program_change then self.on_program_change(k2, val) end
+    end
     return
   end
 
-  -- Knob Row 3 (8): drum random amount
+  -- Knob Row 3 (8): drum resonance
   local k3 = self._knob3_map[cc]
   if k3 and k3 == 8 then
-    local amt = val / 127
-    if self.on_random_amt then self.on_random_amt(amt) end
+    local res = 0.1 + (val / 127) * 0.9  -- 0.1 to 1.0
+    if self.on_resonance then self.on_resonance(res) end
     return
   end
 
@@ -164,14 +168,12 @@ function MidiMix:handle_note(note)
 end
 
 -- Update LEDs to reflect mute state for tracks
--- tracks: array of track objects from sequencer
 function MidiMix:update_leds(tracks)
   if not self.midi_in then return end
   for i = 1, 8 do
     local note = MUTE_NOTES[i]
     local track = tracks and tracks[i]
     if track and not track.mute then
-      -- LED on = track active (not muted)
       self.midi_in:note_on(note, 127, 1)
     else
       self.midi_in:note_off(note, 0, 1)
