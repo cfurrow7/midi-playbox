@@ -1,0 +1,18 @@
+#!/bin/bash
+# Wrapper script for audio2midi.py
+# Uses the local venv with all ML dependencies
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VENV="$SCRIPT_DIR/.venv"
+
+if [ ! -d "$VENV" ]; then
+    echo "Setting up Python environment (first run)..."
+    python3.12 -m venv "$VENV"
+    source "$VENV/bin/activate"
+    pip install --upgrade pip setuptools wheel >/dev/null
+    pip install mido basic-pitch demucs
+else
+    source "$VENV/bin/activate"
+fi
+
+python3 "$SCRIPT_DIR/audio2midi.py" "$@"
