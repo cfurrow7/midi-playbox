@@ -59,6 +59,16 @@ local function guess_role_from_range(ch_info)
   end
 end
 
+-- Output channel mapping by role
+-- bass=2, chord=4+11, lead=10+3, drum=15(internal), fx->chord channels
+local ROLE_CHANNELS = {
+  bass  = {2},
+  chord = {4, 11},
+  lead  = {10, 3},
+  fx    = {4, 11},
+}
+local DRUM_CH = 15
+
 -- Build track list from parsed MIDI channel data
 -- Returns array of track objects sorted by note count (most first)
 function TrackAssign.build_tracks(ch_data)
@@ -76,12 +86,23 @@ function TrackAssign.build_tracks(ch_data)
       end
     end
 
+    -- Assign output channels based on role
+    local out_ch
+    local output_type
+    if role == "drum" then
+      out_ch = {DRUM_CH}
+      output_type = "internal"
+    else
+      out_ch = ROLE_CHANNELS[role] or ROLE_CHANNELS.chord
+      output_type = "midi"
+    end
+
     table.insert(tracks, {
       source_ch = ch,
       name = info.name or ("Ch " .. ch),
       role = role or "chord",
-      output = (ch == 10) and "internal" or "midi",  -- drums default to internal engine
-      out_channels = {ch},  -- default: same channel out
+      output = output_type,
+      out_channels = out_ch,
       octave = 0,
       velocity_scale = 1.0,
       mute = false,
