@@ -9,8 +9,10 @@ if [ ! -d "$VENV" ]; then
     echo "Setting up Python environment (first run)..."
     python3.12 -m venv "$VENV"
     source "$VENV/bin/activate"
-    pip install --upgrade pip setuptools wheel >/dev/null
-    pip install mido basic-pitch demucs
+    pip install --upgrade pip "setuptools<81" wheel >/dev/null
+    pip install numpy mido basic-pitch demucs onnxruntime torchcodec "scipy<1.14"
+    # Patch basic-pitch scipy compat (gaussian moved to signal.windows)
+    sed -i '' 's/scipy.signal.gaussian/scipy.signal.windows.gaussian/g' "$VENV/lib/python3.12/site-packages/basic_pitch/note_creation.py" 2>/dev/null
 else
     source "$VENV/bin/activate"
 fi

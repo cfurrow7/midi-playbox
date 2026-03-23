@@ -85,6 +85,20 @@ def separate_stems(audio_path, output_dir, model="htdemucs"):
     return stems
 
 
+def get_model_path():
+    """Get the basic-pitch model path, preferring ONNX over TF."""
+    import basic_pitch
+    model_dir = Path(basic_pitch.__file__).parent / "saved_models" / "icassp_2022"
+    # Prefer ONNX (more compatible), fall back to others
+    for ext in ["nmp.onnx", "nmp.tflite", "nmp"]:
+        p = model_dir / ext
+        if p.exists():
+            return p
+    # Fall back to default constant
+    from basic_pitch import ICASSP_2022_MODEL_PATH
+    return ICASSP_2022_MODEL_PATH
+
+
 def stem_to_midi(stem_path, output_path, stem_name):
     """Convert a single audio stem to MIDI using basic-pitch."""
     from basic_pitch.inference import predict_and_save
@@ -93,12 +107,15 @@ def stem_to_midi(stem_path, output_path, stem_name):
 
     output_dir = output_path.parent
     # basic-pitch outputs to a directory with the input filename
+    model_path = get_model_path()
     predict_and_save(
         audio_path_list=[stem_path],
         output_directory=output_dir,
         save_midi=True,
+        sonify_midi=False,
         save_model_outputs=False,
         save_notes=False,
+        model_or_model_path=model_path,
         onset_threshold=0.5,
         frame_threshold=0.3,
         minimum_note_length=58,  # ms
@@ -125,12 +142,15 @@ def drums_to_midi(stem_path, output_path):
     print("  Converting drums to MIDI (best effort - drums are tricky)...")
 
     output_dir = output_path.parent
+    model_path = get_model_path()
     predict_and_save(
         audio_path_list=[stem_path],
         output_directory=output_dir,
         save_midi=True,
+        sonify_midi=False,
         save_model_outputs=False,
         save_notes=False,
+        model_or_model_path=model_path,
         onset_threshold=0.3,  # lower threshold to catch more drum hits
         frame_threshold=0.2,
         minimum_note_length=30,
