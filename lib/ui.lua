@@ -562,6 +562,16 @@ function UI:draw_queue()
     if #name > 20 then name = name:sub(1, 19) .. "." end
     screen.text(prefix .. name)
   end
+
+  -- Help + save confirmation
+  screen.level(3)
+  screen.move(128, 62)
+  if self._save_flash and self._save_flash > 0 then
+    screen.text_right("SAVED!")
+    self._save_flash = self._save_flash - 1
+  else
+    screen.text_right("K2:del K3:play K1+K3:save")
+  end
 end
 
 function UI:draw_library()
@@ -745,11 +755,20 @@ function UI:key(n, z)
 
   if z ~= 1 then return end
 
+  -- K1 combos: queue and library handle their own, others get mute toggle
   if self.k1_held then
-    if n == 3 then
-      self.seq:toggle_mute(self.mute_cursor)
+    if self.page == 4 then
+      self:key_queue(n)
+      return
+    elseif self.page == 5 then
+      self:key_library(n)
+      return
+    else
+      if n == 3 then
+        self.seq:toggle_mute(self.mute_cursor)
+      end
+      return
     end
-    return
   end
 
   if self.page == 1 then
@@ -797,12 +816,27 @@ end
 
 function UI:key_queue(n)
   if n == 2 then
+    -- K2: remove song from queue
     self.queue:remove(self.queue_cursor)
     self.queue_cursor = util.clamp(self.queue_cursor, 1, math.max(1, self.queue:count()))
   elseif n == 3 then
-    self.queue.position = self.queue_cursor
-    if self.state.on_load_current then
-      self.state.on_load_current()
+    if self.k1_held then
+      -- K1+K3: save queue as playlist
+      if self.queue:count() > 0 then
+        local playlist_dir = _path.code .. "midi-playbox/playlists"
+        os.execute("mkdir -p " .. playlist_dir)
+        local filepath = playlist_dir .. "/saved.txt"
+        if self.queue:save_playlist(filepath) then
+          print("Queue saved to " .. filepath)
+          self._save_flash = 30  -- show "SAVED!" for ~3 seconds
+        end
+      end
+    else
+      -- K3: play selected song
+      self.queue.position = self.queue_cursor
+      if self.state.on_load_current then
+        self.state.on_load_current()
+      end
     end
   end
 end
