@@ -95,4 +95,17 @@ function Queue:load_playlist(filepath, midi_dir)
   return true
 end
 
+-- Save current queue as a playlist file
+function Queue:save_playlist(filepath)
+  local f = io.open(filepath, "w")
+  if not f then return false end
+  for _, song in ipairs(self.songs) do
+    -- Write the filename relative to midi dir
+    local name = song.file:match(".*/(.+)$") or song.file
+    f:write(name .. "\n")
+  end
+  f:close()
+  return true
+end
+
 return Queue

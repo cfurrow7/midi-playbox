@@ -46,6 +46,10 @@ function UI.new(sequencer, queue, state)
   self.flash = {}
   self.drum_flash = { 0, 0, 0, 0, 0, 0, 0, 0 }
 
+  -- Favorites
+  self.favorites = {}  -- set of display names that are favorited
+  self:load_favorites()
+
   -- Animation
   self.anim_t = 0
   self.pyramid_rot = 0
@@ -83,6 +87,46 @@ function UI:scan_dir_recursive(dir, base_dir)
       table.insert(self.lib_files, { file = full_path, name = entry, display = display })
     end
   end
+end
+
+-- ===== FAVORITES =====
+
+local FAVORITES_PATH = _path.data .. "midi-playbox/favorites.txt"
+
+function UI:load_favorites()
+  self.favorites = {}
+  local f = io.open(FAVORITES_PATH, "r")
+  if not f then return end
+  for line in f:lines() do
+    line = line:match("^%s*(.-)%s*$")
+    if line ~= "" then
+      self.favorites[line] = true
+    end
+  end
+  f:close()
+end
+
+function UI:save_favorites()
+  os.execute("mkdir -p " .. _path.data .. "midi-playbox")
+  local f = io.open(FAVORITES_PATH, "w")
+  if not f then return end
+  for name, _ in pairs(self.favorites) do
+    f:write(name .. "\n")
+  end
+  f:close()
+end
+
+function UI:toggle_favorite(display_name)
+  if self.favorites[display_name] then
+    self.favorites[display_name] = nil
+  else
+    self.favorites[display_name] = true
+  end
+  self:save_favorites()
+end
+
+function UI:is_favorite(display_name)
+  return self.favorites[display_name] == true
 end
 
 function UI:note_flash(track_idx)
@@ -530,9 +574,13 @@ function UI:draw_library()
     return
   end
 
+  local fav_count = 0
+  for _ in pairs(self.favorites) do fav_count = fav_count + 1 end
   screen.level(8)
   screen.move(64, 6)
-  screen.text_center(#self.lib_files .. " files")
+  local header = #self.lib_files .. " files"
+  if fav_count > 0 then header = header .. " / " .. fav_count .. " fav" end
+  screen.text_center(header)
 
   local visible = 5
   for i = 1, visible do
@@ -549,16 +597,20 @@ function UI:draw_library()
       screen.fill()
     end
 
+    -- Star for favorites
+    local star = self:is_favorite(entry.display) and "*" or " "
     screen.level(is_selected and 15 or 5)
     screen.move(2, y + 2)
+    screen.text(star)
+    screen.move(8, y + 2)
     local name = entry.display
-    if #name > 22 then name = name:sub(1, 21) .. "." end
+    if #name > 20 then name = name:sub(1, 19) .. "." end
     screen.text(name)
   end
 
   screen.level(3)
   screen.move(128, 62)
-  screen.text_right("K3:add K2:play")
+  screen.text_right("K3:add K1+K3:fav K2:play")
 end
 
 -- ===== INPUT HANDLING =====
@@ -764,7 +816,13 @@ function UI:key_library(n)
   elseif n == 3 then
     local entry = self.lib_files[self.lib_cursor]
     if entry then
-      self.queue:add(entry.display, entry.file)
+      if self.k1_held then
+        -- K1+K3: toggle favorite
+        self:toggle_favorite(entry.display)
+      else
+        -- K3: add to queue
+        self.queue:add(entry.display, entry.file)
+      end
     end
   end
 end
