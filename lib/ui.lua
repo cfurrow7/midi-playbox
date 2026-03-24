@@ -258,8 +258,8 @@ function UI:draw()
     screen.fill()
   end
 
-  -- Mute overlay when K1 held
-  if self.k1_held then
+  -- Mute overlay when K1 held (not on queue/library pages - they use K1 combos)
+  if self.k1_held and self.page ~= 4 and self.page ~= 5 then
     self:draw_mute_overlay()
     screen.update()
     return
