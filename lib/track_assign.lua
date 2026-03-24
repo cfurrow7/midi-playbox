@@ -59,9 +59,10 @@ local function guess_role_from_range(ch_info)
   end
 end
 
--- Output channel mapping by role
--- bass=2, chord=4+11, lead=10+3, drum=15(internal), fx->chord channels
-local ROLE_CHANNELS = {
+-- Channel pools per role (tracks get spread across these)
+-- If only 1 track of a role: gets all channels (layered)
+-- If 2+ tracks: each gets one channel round-robin
+local ROLE_CHANNEL_POOL = {
   bass  = {2},
   chord = {4, 11},
   lead  = {10, 3},
@@ -86,23 +87,12 @@ function TrackAssign.build_tracks(ch_data)
       end
     end
 
-    -- Assign output channels based on role
-    local out_ch
-    local output_type
-    if role == "drum" then
-      out_ch = {DRUM_CH}
-      output_type = "internal"
-    else
-      out_ch = ROLE_CHANNELS[role] or ROLE_CHANNELS.chord
-      output_type = "midi"
-    end
-
     table.insert(tracks, {
       source_ch = ch,
       name = info.name or ("Ch " .. ch),
       role = role or "chord",
-      output = output_type,
-      out_channels = out_ch,
+      output = (role == "drum") and "internal" or "midi",
+      out_channels = {},  -- assigned in second pass
       octave = 0,
       velocity_scale = 1.0,
       mute = false,
@@ -114,11 +104,39 @@ function TrackAssign.build_tracks(ch_data)
 
   -- Sort by note count (most notes first, like PMS)
   table.sort(tracks, function(a, b)
-    -- Drums always last
     if a.role == "drum" and b.role ~= "drum" then return false end
     if a.role ~= "drum" and b.role == "drum" then return true end
     return a.note_count > b.note_count
   end)
+
+  -- Second pass: spread channels across tracks per role
+  -- Count tracks per role
+  local role_counts = {}
+  for _, t in ipairs(tracks) do
+    role_counts[t.role] = (role_counts[t.role] or 0) + 1
+  end
+
+  -- Assign channels round-robin
+  local role_idx = {}  -- current index into channel pool per role
+  for _, t in ipairs(tracks) do
+    if t.role == "drum" then
+      t.out_channels = {DRUM_CH}
+    else
+      local pool = ROLE_CHANNEL_POOL[t.role] or ROLE_CHANNEL_POOL.chord
+      local count = role_counts[t.role] or 1
+
+      if count == 1 then
+        -- Solo track for this role: gets all channels (layered)
+        t.out_channels = {table.unpack(pool)}
+      else
+        -- Multiple tracks: each gets one channel round-robin
+        local idx = (role_idx[t.role] or 0)
+        local ch = pool[(idx % #pool) + 1]
+        t.out_channels = {ch}
+        role_idx[t.role] = idx + 1
+      end
+    end
+  end
 
   return tracks
 end
