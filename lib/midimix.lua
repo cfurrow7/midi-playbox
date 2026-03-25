@@ -205,6 +205,7 @@ function MidiMix:update_leds(tracks)
       self.midi_in:note_on(rec_note, 127, 1)
     else
       self.midi_in:note_on(rec_note, 0, 1)
+      self.midi_in:note_off(rec_note, 0, 1)
     end
   end
 end
@@ -213,7 +214,9 @@ function MidiMix:leds_off()
   if not self.midi_in then return end
   for i = 1, 8 do
     self.midi_in:note_on(MUTE_NOTES[i], 0, 1)
+    self.midi_in:note_off(MUTE_NOTES[i], 0, 1)
     self.midi_in:note_on(REC_NOTES[i], 0, 1)
+    self.midi_in:note_off(REC_NOTES[i], 0, 1)
   end
 end
 
