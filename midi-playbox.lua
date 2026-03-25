@@ -197,10 +197,21 @@ function setup_midimix()
     advance_queue()
   end
 
-  -- Master fader = BPM
+  -- Master fader = BPM (debounced to avoid stop/rebuild spam)
+  local bpm_pending = nil
+  local bpm_clock = nil
   midimix.on_bpm = function(bpm)
-    print("BPM: " .. bpm)
-    seq:set_bpm(bpm)
+    bpm_pending = bpm
+    if bpm_clock then clock.cancel(bpm_clock) end
+    bpm_clock = clock.run(function()
+      clock.sleep(0.15)
+      if bpm_pending then
+        print("BPM: " .. bpm_pending)
+        seq:set_bpm(bpm_pending)
+        bpm_pending = nil
+        bpm_clock = nil
+      end
+    end)
   end
 
   -- SEND ALL button (above master fader) = PANIC
