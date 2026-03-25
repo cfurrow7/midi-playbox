@@ -63,6 +63,14 @@ function init()
   -- Set default drum kit
   engine.kit(0)  -- 808
 
+  -- Send PC 0 (init patch) to all MIDI channels on startup
+  if seq.midi_out then
+    for ch = 1, 16 do
+      seq.midi_out:program_change(0, ch)
+    end
+    print("Sent PC 0 to all MIDI channels")
+  end
+
   -- Sequencer callbacks
   seq.on_note = function(track_idx, note, vel, drum_voice)
     ui:note_flash(track_idx)
