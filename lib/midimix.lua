@@ -81,6 +81,8 @@ function MidiMix:connect(device_num)
     self:handle_event(data)
   end
   print("MIDIMIX connected on device " .. device_num)
+  -- Start with all LEDs off
+  self:leds_off()
 end
 
 function MidiMix:handle_event(data)
