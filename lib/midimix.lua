@@ -193,11 +193,18 @@ function MidiMix:update_leds(tracks)
     local track = tracks and tracks[i]
     -- LED on = not muted AND has volume
     local vel = track and (track.velocity_scale or 1)
-    -- note_on vel 127 = LED on, note_on vel 0 = LED off
+    -- Mute LED: note_on vel 127 = on, vel 0 = off
     if track and not track.mute and vel > 0 then
       self.midi_in:note_on(note, 127, 1)
     else
       self.midi_in:note_on(note, 0, 1)
+    end
+    -- Rec arm LED: on = all-channel broadcast active
+    local rec_note = REC_NOTES[i]
+    if track and track.out_channels and #track.out_channels == 16 then
+      self.midi_in:note_on(rec_note, 127, 1)
+    else
+      self.midi_in:note_on(rec_note, 0, 1)
     end
   end
 end
@@ -206,6 +213,7 @@ function MidiMix:leds_off()
   if not self.midi_in then return end
   for i = 1, 8 do
     self.midi_in:note_on(MUTE_NOTES[i], 0, 1)
+    self.midi_in:note_on(REC_NOTES[i], 0, 1)
   end
 end
 

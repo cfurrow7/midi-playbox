@@ -182,6 +182,7 @@ function setup_midimix()
   -- Rec buttons: toggle all-channel broadcast
   midimix.on_all_toggle = function(track_idx)
     seq:set_all_channels(track_idx)
+    midimix:update_leds(seq.tracks)
   end
 
   -- Bank buttons: prev/next song
