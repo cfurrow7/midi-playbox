@@ -187,6 +187,12 @@ function setup_midimix()
     advance_queue()
   end
 
+  -- Master fader = BPM
+  midimix.on_bpm = function(bpm)
+    print("BPM: " .. bpm)
+    seq:set_bpm(bpm)
+  end
+
   -- SEND ALL button (above master fader) = PANIC
   midimix.on_panic = function()
     print("PANIC! All notes off")

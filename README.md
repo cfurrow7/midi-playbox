@@ -94,7 +94,7 @@ Favorites persist to `data/midi-playbox/favorites.txt`.
  REC 1-8:     toggle all-channel broadcast
 
  FADERS 1-8:  track velocity
- MASTER:      (unused)
+ MASTER:      BPM (20-300)
 
  BANK L/R:    prev/next song in queue
  SEND ALL:    PANIC (stop + all notes off)

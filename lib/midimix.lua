@@ -53,6 +53,7 @@ function MidiMix.new()
   self.on_filter = nil        -- function(freq)
   self.on_resonance = nil     -- function(res)
   self.on_panic = nil         -- function()  -- SEND ALL button = panic
+  self.on_bpm = nil           -- function(bpm)  -- master fader = BPM
 
   -- Build reverse lookup tables
   self._fader_map = {}
@@ -129,6 +130,13 @@ function MidiMix:handle_cc(cc, val)
   if k3 and k3 == 8 then
     local res = 0.1 + (val / 127) * 0.9  -- 0.1 to 1.0
     if self.on_resonance then self.on_resonance(res) end
+    return
+  end
+
+  -- Master fader: BPM
+  if cc == MASTER_CC then
+    local bpm = math.floor(20 + (val / 127) * 280)  -- 20-300 BPM
+    if self.on_bpm then self.on_bpm(bpm) end
     return
   end
 
