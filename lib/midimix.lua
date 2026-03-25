@@ -189,7 +189,9 @@ function MidiMix:update_leds(tracks)
   for i = 1, 8 do
     local note = MUTE_NOTES[i]
     local track = tracks and tracks[i]
-    if track and not track.mute then
+    -- LED on = not muted AND has volume
+    local vel = track and (track.velocity_scale or 1)
+    if track and not track.mute and vel > 0 then
       self.midi_in:note_on(note, 127, 1)
     else
       self.midi_in:note_off(note, 0, 1)

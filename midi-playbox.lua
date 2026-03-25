@@ -139,6 +139,7 @@ function setup_midimix()
     if track.output == "internal" then
       engine.amp(vel)
     end
+    midimix:update_leds(seq.tracks)
   end
 
   -- Knob Row 1 (1-8): MIDI output channel per track
