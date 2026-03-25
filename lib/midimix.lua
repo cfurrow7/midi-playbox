@@ -223,6 +223,10 @@ function MidiMix:leds_off()
     self.midi_in:note_on(REC_NOTES[i], 0, 1)
     self.midi_in:note_off(REC_NOTES[i], 0, 1)
   end
+  -- Start on page 1
+  self.midi_in:note_on(BANK_LEFT_NOTE, 127, 1)
+  self.midi_in:note_on(BANK_RIGHT_NOTE, 0, 1)
+  end
 end
 
 return MidiMix
