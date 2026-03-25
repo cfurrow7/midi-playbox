@@ -208,6 +208,11 @@ function MidiMix:update_leds(tracks)
       self.midi_in:note_off(rec_note, 0, 1)
     end
   end
+  -- Bank indicator LEDs (midi-playbox only has 1 page, but keep consistent)
+  if self.bank ~= nil then
+    self.midi_in:note_on(BANK_LEFT_NOTE, 127, 1)
+    self.midi_in:note_on(BANK_RIGHT_NOTE, 0, 1)
+  end
 end
 
 function MidiMix:leds_off()
