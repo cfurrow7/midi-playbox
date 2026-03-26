@@ -263,6 +263,11 @@ function Sequencer:set_all_channels(track_idx)
   end
 end
 
+-- Reassign output channels on current tracks (after channel config change)
+function Sequencer:reassign_channels()
+  TrackAssign.reassign_channels(self.tracks)
+end
+
 function Sequencer:track_count()
   return #self.tracks
 end

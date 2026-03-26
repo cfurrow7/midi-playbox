@@ -16,6 +16,7 @@ local Sequencer = include("midi-playbox/lib/sequencer")
 local Queue = include("midi-playbox/lib/queue")
 local UILib = include("midi-playbox/lib/ui")
 local MidiMix = include("midi-playbox/lib/midimix")
+local TrackAssign = include("midi-playbox/lib/track_assign")
 
 local seq = Sequencer.new()
 local queue = Queue.new()
@@ -104,6 +105,32 @@ function init()
   params:set_action("drum_kit", function(val)
     state.kit = val
     engine.kit(val - 1)
+  end)
+
+  params:add_separator("CHANNEL ROUTING")
+
+  params:add_number("bass_ch", "Bass Ch", 1, 16, 2)
+  params:set_action("bass_ch", function(val)
+    TrackAssign.set_channel("bass", val)
+    seq:reassign_channels()
+  end)
+
+  params:add_number("chord_ch", "Chord Ch", 1, 16, 4)
+  params:set_action("chord_ch", function(val)
+    TrackAssign.set_channel("chord", val)
+    seq:reassign_channels()
+  end)
+
+  params:add_number("lead_ch", "Lead Ch", 1, 16, 10)
+  params:set_action("lead_ch", function(val)
+    TrackAssign.set_channel("lead", val)
+    seq:reassign_channels()
+  end)
+
+  params:add_number("drum_ch", "Drum Ch", 1, 16, 15)
+  params:set_action("drum_ch", function(val)
+    TrackAssign.set_channel("drum", val)
+    seq:reassign_channels()
   end)
 
   -- ===== MIDIMIX SETUP =====

@@ -62,6 +62,7 @@ end
 -- Channel pools per role (tracks get spread across these)
 -- If only 1 track of a role: gets all channels (layered)
 -- If 2+ tracks: each gets one channel round-robin
+-- These are the defaults; override with TrackAssign.set_channel()
 local ROLE_CHANNEL_POOL = {
   bass  = {2},
   chord = {4, 11},
@@ -69,6 +70,22 @@ local ROLE_CHANNEL_POOL = {
   fx    = {4, 11},
 }
 local DRUM_CH = 15
+
+-- Set primary channel for a role (replaces first entry in pool)
+function TrackAssign.set_channel(role, ch)
+  if role == "drum" then
+    DRUM_CH = ch
+  elseif ROLE_CHANNEL_POOL[role] then
+    ROLE_CHANNEL_POOL[role][1] = ch
+  end
+end
+
+-- Get current primary channel for a role
+function TrackAssign.get_channel(role)
+  if role == "drum" then return DRUM_CH end
+  local pool = ROLE_CHANNEL_POOL[role]
+  return pool and pool[1] or 1
+end
 
 -- Build track list from parsed MIDI channel data
 -- Returns array of track objects sorted by note count (most first)
@@ -139,6 +156,35 @@ function TrackAssign.build_tracks(ch_data)
   end
 
   return tracks
+end
+
+-- Reassign out_channels on existing tracks using current channel pools
+function TrackAssign.reassign_channels(tracks)
+  if not tracks then return end
+  local role_counts = {}
+  for _, t in ipairs(tracks) do
+    role_counts[t.role] = (role_counts[t.role] or 0) + 1
+  end
+  local role_idx = {}
+  for _, t in ipairs(tracks) do
+    -- Skip tracks that were manually set to all-16 broadcast
+    if t.out_channels and #t.out_channels == 16 then
+      -- leave as-is
+    elseif t.role == "drum" then
+      t.out_channels = {DRUM_CH}
+    else
+      local pool = ROLE_CHANNEL_POOL[t.role] or ROLE_CHANNEL_POOL.chord
+      local count = role_counts[t.role] or 1
+      if count == 1 then
+        t.out_channels = {table.unpack(pool)}
+      else
+        local idx = (role_idx[t.role] or 0)
+        local ch = pool[(idx % #pool) + 1]
+        t.out_channels = {ch}
+        role_idx[t.role] = idx + 1
+      end
+    end
+  end
 end
 
 -- Map a GM drum note to a drum voice (0-7), or nil if not mapped
