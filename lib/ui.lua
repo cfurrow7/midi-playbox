@@ -499,8 +499,8 @@ function UI:draw_tracks()
   -- Scroll indicator
   if tc > visible then
     screen.level(3)
-    screen.move(125, 62)
-    screen.text(self.track_scroll + 1 .. "-" .. math.min(self.track_scroll + visible, tc) .. "/" .. tc)
+    screen.move(128, 63)
+    screen.text_right(self.track_scroll + 1 .. "-" .. math.min(self.track_scroll + visible, tc) .. "/" .. tc)
   end
 end
 
@@ -540,20 +540,17 @@ function UI:draw_drums()
   local rnd_pct = math.floor(self.random_amt * 100)
   screen.text("Rnd:" .. rnd_pct .. "%")
 
-  screen.level(3)
-  screen.move(0, 63)
-  screen.text("K2:dice K3:keep")
-
+  -- Drum voices (2 rows of 4)
   for i = 1, 8 do
     local x = ((i - 1) % 4) * 32
-    local y = 38 + math.floor((i - 1) / 4) * 13
+    local y = 40 + math.floor((i - 1) / 4) * 12
 
     screen.level(self.drum_flash[i] > 0 and 15 or 4)
-    screen.move(x + 2, y + 10)
+    screen.move(x + 2, y + 8)
     screen.text(DRUM_VOICE_NAMES[i])
 
     screen.level(self.drum_flash[i] > 0 and 12 or 1)
-    screen.rect(x, y + 12, 28, 2)
+    screen.rect(x, y + 10, 28, 2)
     screen.fill()
   end
 end
