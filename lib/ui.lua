@@ -407,28 +407,102 @@ function UI:draw_play()
   end
 end
 
--- Unified output positions: 1-16 = MIDI ch, 17 = nb, 18 = DRM, 19 = OFF
+-- Unified output: ch1-16, [nb voices...], DRM, OFF
+-- Positions: 1-16 = MIDI ch, 17..16+N = nb voices, 16+N+1 = DRM, 16+N+2 = OFF
+
+-- Cache nb voice names (built once, refreshed if empty)
+local nb_voice_names = {}
+
+local function get_nb_voices()
+  if #nb_voice_names > 0 then return nb_voice_names end
+  -- Read voice names from the first track's nb param options
+  local p = params:lookup_param("track_1_voice")
+  if p and p.options then
+    for i, name in ipairs(p.options) do
+      if name ~= "none" then
+        table.insert(nb_voice_names, name)
+      end
+    end
+  end
+  return nb_voice_names
+end
+
+local function total_out_positions()
+  return 16 + #get_nb_voices() + 2  -- midi chs + nb voices + DRM + OFF
+end
+
 local function track_to_out_pos(track)
-  if track.output == "off" then return 19
-  elseif track.output == "internal" then return 18
-  elseif track.output == "nb" then return 17
-  else return track.out_channels[1] or 1
+  local voices = get_nb_voices()
+  local drm_pos = 17 + #voices
+  local off_pos = drm_pos + 1
+
+  if track.output == "off" then return off_pos
+  elseif track.output == "internal" then return drm_pos
+  elseif track.output == "nb" then
+    -- Find which nb voice is selected for this track
+    local track_idx = track._ui_idx or 1
+    local p = params:lookup_param("track_" .. track_idx .. "_voice")
+    if p then
+      local selected = p.options[p:get()] or "none"
+      for i, name in ipairs(voices) do
+        if name == selected then return 16 + i end
+      end
+    end
+    return 17  -- fallback to first nb voice
+  else
+    return track.out_channels[1] or 1
   end
 end
 
-local function apply_out_pos(track, pos)
+local function apply_out_pos(track, pos, track_idx)
+  local voices = get_nb_voices()
+  local drm_pos = 17 + #voices
+  local off_pos = drm_pos + 1
+
   if pos >= 1 and pos <= 16 then
     track.output = "midi"
     track.out_channels = {pos}
-  elseif pos == 17 then
+  elseif pos >= 17 and pos <= 16 + #voices then
+    -- Set to specific nb voice
     track.output = "nb"
     track.out_channels = {0}
-  elseif pos == 18 then
+    local voice_name = voices[pos - 16]
+    local p = params:lookup_param("track_" .. track_idx .. "_voice")
+    if p and p.options then
+      for i, name in ipairs(p.options) do
+        if name == voice_name then
+          params:set("track_" .. track_idx .. "_voice", i)
+          break
+        end
+      end
+    end
+  elseif pos == drm_pos then
     track.output = "internal"
     track.out_channels = {0}
   else
     track.output = "off"
     track.out_channels = {0}
+  end
+end
+
+-- Short display label for an output position
+local function out_pos_label(pos)
+  local voices = get_nb_voices()
+  local drm_pos = 17 + #voices
+  local off_pos = drm_pos + 1
+
+  if pos >= 1 and pos <= 16 then
+    return "ch" .. pos
+  elseif pos >= 17 and pos <= 16 + #voices then
+    local name = voices[pos - 16]
+    -- Shorten: strip "midi: " prefix, truncate
+    name = name:gsub("^midi: ", "")
+    if #name > 6 then name = name:sub(1, 6) end
+    return name
+  elseif pos == drm_pos then
+    return "DRM"
+  else
+    return "OFF"
   end
 end
 
@@ -468,17 +542,12 @@ function UI:draw_tracks()
     if #name > 8 then name = name:sub(1, 7) .. "." end
     screen.text(name)
 
-    -- Output (unified: ch1-16, nb, DRM, OFF)
+    -- Output (unified: ch1-16, nb voices, DRM, OFF)
+    track._ui_idx = idx  -- stash index for nb voice lookup
     screen.level(selected and self.track_field == 1 and 15 or 6)
     screen.move(72, y + 6)
     local pos = track_to_out_pos(track)
-    local out_str
-    if pos <= 16 then out_str = "ch" .. pos
-    elseif pos == 17 then out_str = "nb"
-    elseif pos == 18 then out_str = "DRM"
-    else out_str = "OFF"
-    end
-    screen.text(out_str)
+    screen.text(out_pos_label(pos))
 
     -- Octave
     screen.level(selected and self.track_field == 2 and 15 or 6)
@@ -704,10 +773,11 @@ function UI:enc_tracks(n, d)
     if not track then return end
 
     if self.track_field == 1 then
-      -- Unified output: ch1-16, nb, DRM, OFF
+      -- Unified output: ch1-16, [nb voices], DRM, OFF
+      track._ui_idx = self.track_cursor
       local pos = track_to_out_pos(track)
-      pos = util.clamp(pos + d, 1, 19)
-      apply_out_pos(track, pos)
+      pos = util.clamp(pos + d, 1, total_out_positions())
+      apply_out_pos(track, pos, self.track_cursor)
     elseif self.track_field == 2 then
       -- Adjust octave
       if track.output ~= "internal" then
