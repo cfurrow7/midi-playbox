@@ -1,5 +1,6 @@
-// Engine_DrumBox: 8-voice synthesized drum machine for MIDI JUKEBOX
-// Kits: 808, 707, 606, DrumTraks (all synthesis, no samples needed)
+// Engine_DrumBox: 8-voice drum machine + 8-voice polyphonic synth for MIDI JUKEBOX
+// Drums: 808, 707, 606, DrumTraks (all synthesis, no samples)
+// Synth: saw, square, sine, pad, FM -- 8-voice polyphonic with ADSR + LPF
 // Global LPF filter on drum output
 
 Engine_DrumBox : CroneEngine {
@@ -9,13 +10,26 @@ Engine_DrumBox : CroneEngine {
     var <filterSynth;
     var <lpfFreq;
     var <randomAmount;
-    var <randomOffsets;  // per-voice per-param offsets
+    var <randomOffsets;
+    // Synth voice state
+    var <synthVoices;    // Array of 8 active Synth nodes (nil = free)
+    var <synthType;      // 0=saw, 1=square, 2=sine, 3=pad, 4=fm
+    var <synthAmp;
+    var <synthCutoff;
+    var <synthAttack;
+    var <synthRelease;
 
     alloc {
         masterAmp = 0.8;
         lpfFreq = 20000;
         randomAmount = 0.0;
         randomOffsets = Array.fill(8, { Dictionary[\freq -> 0, \decay -> 0, \sweep -> 0, \noiseAmt -> 0] });
+        synthVoices = Array.fill(8, { nil });
+        synthType = 0;
+        synthAmp = 0.5;
+        synthCutoff = 4000;
+        synthAttack = 0.01;
+        synthRelease = 0.3;
 
         // Audio bus for drum output -> filter
         filterBus = Bus.audio(context.server, 2);
@@ -91,6 +105,48 @@ Engine_DrumBox : CroneEngine {
             var ring2 = SinOsc.ar(freq * 2.42) * 0.05;
             var sig = (noise + ring1 + ring2) * env * amp;
             Out.ar(out, Pan2.ar(sig, pan));
+        }).add;
+
+        // ---- Polyphonic synth voices ----
+
+        // Saw lead
+        SynthDef(\voxbox_saw, { |out=0, freq=440, vel=0.5, amp=0.5, gate=1, atk=0.01, rel=0.3, cutoff=4000, pan=0|
+            var env = EnvGen.kr(Env.adsr(atk, 0.1, 0.7, rel), gate, doneAction: 2);
+            var sig = Saw.ar(freq) + Saw.ar(freq * 1.005);
+            sig = RLPF.ar(sig, cutoff.clip(100, 18000), 0.5);
+            Out.ar(out, Pan2.ar(sig * env * vel * amp, pan));
+        }).add;
+
+        // Square / pulse
+        SynthDef(\voxbox_square, { |out=0, freq=440, vel=0.5, amp=0.5, gate=1, atk=0.01, rel=0.3, cutoff=4000, pan=0|
+            var env = EnvGen.kr(Env.adsr(atk, 0.1, 0.8, rel), gate, doneAction: 2);
+            var sig = Pulse.ar(freq, 0.4) + Pulse.ar(freq * 0.998, 0.5);
+            sig = RLPF.ar(sig, cutoff.clip(100, 18000), 0.5);
+            Out.ar(out, Pan2.ar(sig * env * vel * amp * 0.5, pan));
+        }).add;
+
+        // Pure sine (sub bass / clean)
+        SynthDef(\voxbox_sine, { |out=0, freq=440, vel=0.5, amp=0.5, gate=1, atk=0.01, rel=0.3, cutoff=4000, pan=0|
+            var env = EnvGen.kr(Env.adsr(atk, 0.05, 0.9, rel), gate, doneAction: 2);
+            var sig = SinOsc.ar(freq) + SinOsc.ar(freq * 2, 0, 0.2);
+            Out.ar(out, Pan2.ar(sig * env * vel * amp, pan));
+        }).add;
+
+        // Pad (filtered saw, slow attack)
+        SynthDef(\voxbox_pad, { |out=0, freq=440, vel=0.5, amp=0.5, gate=1, atk=0.3, rel=1.0, cutoff=2000, pan=0|
+            var env = EnvGen.kr(Env.adsr(atk, 0.5, 0.6, rel), gate, doneAction: 2);
+            var sig = Saw.ar(freq) + Saw.ar(freq * 1.007) + Saw.ar(freq * 0.993);
+            sig = RLPF.ar(sig, cutoff.clip(100, 18000), 0.4);
+            Out.ar(out, Pan2.ar(sig * env * vel * amp * 0.35, pan));
+        }).add;
+
+        // FM (bell / electric piano)
+        SynthDef(\voxbox_fm, { |out=0, freq=440, vel=0.5, amp=0.5, gate=1, atk=0.01, rel=0.5, cutoff=6000, pan=0|
+            var env = EnvGen.kr(Env.adsr(atk, 0.2, 0.4, rel), gate, doneAction: 2);
+            var mod = SinOsc.ar(freq * 3.01) * freq * 2 * EnvGen.kr(Env.perc(0.01, 0.8));
+            var sig = SinOsc.ar(freq + mod);
+            sig = RLPF.ar(sig, cutoff.clip(100, 18000), 0.7);
+            Out.ar(out, Pan2.ar(sig * env * vel * amp, pan));
         }).add;
 
         // ---- Kit parameter definitions ----
@@ -238,6 +294,79 @@ Engine_DrumBox : CroneEngine {
             randomAmount = msg[1].asFloat.clip(0, 1);
         });
 
+        // ---- Synth voice commands ----
+
+        // Synth note on: slot (0-7), MIDI note, velocity (0.0-1.0)
+        this.addCommand(\synth_on, "iif", { |msg|
+            var slot = msg[1].asInteger.clip(0, 7);
+            var note = msg[2].asInteger;
+            var vel = msg[3].asFloat.clip(0, 1);
+            var freq = note.midicps;
+            var synthNames = [\voxbox_saw, \voxbox_square, \voxbox_sine, \voxbox_pad, \voxbox_fm];
+            var name = synthNames[synthType.clip(0, 4)];
+
+            // Free existing voice in this slot
+            if (synthVoices[slot].notNil, {
+                synthVoices[slot].set(\gate, 0);
+                synthVoices[slot] = nil;
+            });
+
+            synthVoices[slot] = Synth(name, [
+                \out, 0,
+                \freq, freq,
+                \vel, vel,
+                \amp, synthAmp,
+                \gate, 1,
+                \atk, synthAttack,
+                \rel, synthRelease,
+                \cutoff, synthCutoff
+            ], addAction: \addToHead);
+        });
+
+        // Synth note off: slot (0-7)
+        this.addCommand(\synth_off, "i", { |msg|
+            var slot = msg[1].asInteger.clip(0, 7);
+            if (synthVoices[slot].notNil, {
+                synthVoices[slot].set(\gate, 0);
+                synthVoices[slot] = nil;
+            });
+        });
+
+        // Synth type: 0=saw, 1=square, 2=sine, 3=pad, 4=fm
+        this.addCommand(\synth_type, "i", { |msg|
+            synthType = msg[1].asInteger.clip(0, 4);
+        });
+
+        // Synth master amp
+        this.addCommand(\synth_amp, "f", { |msg|
+            synthAmp = msg[1].asFloat.clip(0, 1);
+        });
+
+        // Synth filter cutoff
+        this.addCommand(\synth_cutoff, "f", { |msg|
+            synthCutoff = msg[1].asFloat.clip(100, 18000);
+        });
+
+        // Synth attack time
+        this.addCommand(\synth_attack, "f", { |msg|
+            synthAttack = msg[1].asFloat.clip(0.001, 2.0);
+        });
+
+        // Synth release time
+        this.addCommand(\synth_release, "f", { |msg|
+            synthRelease = msg[1].asFloat.clip(0.01, 5.0);
+        });
+
+        // All synth voices off (panic)
+        this.addCommand(\synth_panic, "", { |msg|
+            8.do { |i|
+                if (synthVoices[i].notNil, {
+                    synthVoices[i].set(\gate, 0);
+                    synthVoices[i] = nil;
+                });
+            };
+        });
+
         // Keep: bake current randomization into the kit params (new baseline)
         this.addCommand(\random_keep, "", { |msg|
             var currentKit = kitParams[\current];
@@ -271,6 +400,9 @@ Engine_DrumBox : CroneEngine {
     }
 
     free {
+        8.do { |i|
+            if (synthVoices[i].notNil, { synthVoices[i].free; synthVoices[i] = nil; });
+        };
         if (filterSynth.notNil, { filterSynth.free; });
         if (filterBus.notNil, { filterBus.free; });
     }

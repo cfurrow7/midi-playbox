@@ -32,6 +32,10 @@ function Sequencer.new()
   self.min_velocity = 0    -- 0=off, or threshold (e.g. 20)
   self.min_duration = 0    -- 0=off, or seconds (e.g. 0.05)
 
+  -- Internal synth voice allocator (8 slots, round-robin)
+  self.synth_next_slot = 0
+  self.synth_note_map = {}  -- note -> slot
+
   -- Callbacks
   self.on_note = nil       -- function(track_idx, note, vel, drum_voice)
   self.on_end = nil
@@ -179,6 +183,37 @@ function Sequencer:route_event(event)
         end
       end
     end
+  elseif track.output == "synth" then
+    -- Route to internal polyphonic synth engine
+    local note = event.note + (track.octave or 0) * 12
+    note = math.max(0, math.min(127, note))
+
+    if event.type == "note_on" and event.velocity > 0 then
+      local scale = track.velocity_scale or 1.0
+      if scale <= 0.01 then return end
+      local vel = (event.velocity / 127) * scale
+
+      -- Allocate a voice slot (round-robin, 8 slots)
+      local slot = self.synth_next_slot
+      -- Check if this note is already playing, reuse that slot
+      if self.synth_note_map[note] then
+        slot = self.synth_note_map[note]
+      else
+        self.synth_next_slot = (self.synth_next_slot + 1) % 8
+      end
+      self.synth_note_map[note] = slot
+      engine.synth_on(slot, note, vel)
+
+      if self.on_note then
+        self.on_note(track_idx, note, math.floor(event.velocity * scale))
+      end
+    elseif event.type == "note_off" or (event.type == "note_on" and event.velocity == 0) then
+      local slot = self.synth_note_map[note]
+      if slot then
+        engine.synth_off(slot)
+        self.synth_note_map[note] = nil
+      end
+    end
   elseif track.output == "midi" then
     -- Route to MIDI out (supports multiple channels)
     if self.midi_out then
@@ -214,6 +249,11 @@ function Sequencer:route_event(event)
 end
 
 function Sequencer:all_notes_off()
+  -- Kill internal synth voices
+  engine.synth_panic()
+  self.synth_note_map = {}
+  self.synth_next_slot = 0
+
   if self.midi_out then
     for _, an in ipairs(self.active_notes) do
       self.midi_out:note_off(an[2], 0, an[1])

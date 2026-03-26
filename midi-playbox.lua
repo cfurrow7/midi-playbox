@@ -133,6 +133,33 @@ function init()
     seq:reassign_channels()
   end)
 
+  params:add_separator("NORNS SYNTH")
+
+  params:add_option("synth_type", "Synth Voice", {"Saw", "Square", "Sine", "Pad", "FM"}, 1)
+  params:set_action("synth_type", function(val)
+    engine.synth_type(val - 1)
+  end)
+
+  params:add_control("synth_cutoff", "Synth Cutoff", controlspec.new(100, 18000, 'exp', 0, 4000, 'Hz'))
+  params:set_action("synth_cutoff", function(val)
+    engine.synth_cutoff(val)
+  end)
+
+  params:add_control("synth_attack", "Synth Attack", controlspec.new(0.001, 2.0, 'exp', 0, 0.01, 's'))
+  params:set_action("synth_attack", function(val)
+    engine.synth_attack(val)
+  end)
+
+  params:add_control("synth_release", "Synth Release", controlspec.new(0.01, 5.0, 'exp', 0, 0.3, 's'))
+  params:set_action("synth_release", function(val)
+    engine.synth_release(val)
+  end)
+
+  params:add_control("synth_amp", "Synth Volume", controlspec.new(0, 1, 'lin', 0, 0.5))
+  params:set_action("synth_amp", function(val)
+    engine.synth_amp(val)
+  end)
+
   params:add_separator("MIDI FILTER")
 
   params:add_option("quantize", "Quantize", {"Off", "1/4", "1/8", "1/16", "1/32"}, 4)
@@ -192,10 +219,17 @@ function setup_midimix()
   end
 
   -- Knob Row 1 (1-8): MIDI output channel per track
+  -- ch 1-15 = MIDI out, ch 16 = internal norns synth
   midimix.on_channel = function(track_idx, ch)
     local track = seq.tracks[track_idx]
     if not track then return end
-    if track.output == "midi" then
+    if track.role == "drum" then return end  -- drums stay internal
+    if ch == 16 then
+      track.output = "synth"
+      track.out_channels = {0}
+      print("Track " .. track_idx .. " -> norns synth")
+    else
+      track.output = "midi"
       track.out_channels = {ch}
     end
   end
