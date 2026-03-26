@@ -417,8 +417,8 @@ local function get_nb_voices()
   if #nb_voice_names > 0 then return nb_voice_names end
   -- Read voice names from the first track's nb param options
   -- Filter out "midi: " entries (we already have ch1-16 for MIDI)
-  local p = params:lookup_param("track_1_voice")
-  if p and p.options then
+  local ok, p = pcall(function() return params:lookup_param("track_1_voice") end)
+  if ok and p and p.options then
     for i, name in ipairs(p.options) do
       if name ~= "none" and not name:match("^midi: ") then
         table.insert(nb_voice_names, name)
@@ -442,14 +442,16 @@ local function track_to_out_pos(track)
   elseif track.output == "nb" then
     -- Find which nb voice is selected for this track
     local track_idx = track._ui_idx or 1
-    local p = params:lookup_param("track_" .. track_idx .. "_voice")
-    if p then
-      local selected = p.options[p:get()] or "none"
+    local ok, p = pcall(function() return params:lookup_param("track_" .. track_idx .. "_voice") end)
+    if ok and p and p.options then
+      local sel_idx = p:get()
+      local selected = p.options[sel_idx] or "none"
       for i, name in ipairs(voices) do
         if name == selected then return 16 + i end
       end
     end
-    return 17  -- fallback to first nb voice
+    if #voices > 0 then return 17 end
+    return drm_pos  -- no nb voices available, skip to DRM
   else
     return track.out_channels[1] or 1
   end
@@ -468,12 +470,14 @@ local function apply_out_pos(track, pos, track_idx)
     track.output = "nb"
     track.out_channels = {0}
     local voice_name = voices[pos - 16]
-    local p = params:lookup_param("track_" .. track_idx .. "_voice")
-    if p and p.options then
-      for i, name in ipairs(p.options) do
-        if name == voice_name then
-          params:set("track_" .. track_idx .. "_voice", i)
-          break
+    if voice_name and track_idx then
+      local ok, p = pcall(function() return params:lookup_param("track_" .. track_idx .. "_voice") end)
+      if ok and p and p.options then
+        for i, name in ipairs(p.options) do
+          if name == voice_name then
+            params:set("track_" .. track_idx .. "_voice", i)
+            break
+          end
         end
       end
     end
