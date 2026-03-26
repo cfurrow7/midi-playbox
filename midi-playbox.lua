@@ -1,14 +1,14 @@
 -- MIDI JUKEBOX
 -- Dynamic track MIDI song player with built-in drum machine
 -- Auto-assigns MIDI channels to roles (bass/chord/lead/drum/fx)
--- Drum tracks -> internal synthesized drums (808/707/606/DrumTraks)
+-- Drum tracks -> sample-based drums (808/909/606/LinnDrum/DMX) with LPF + delay
 -- Synth tracks -> MIDI out, or nb voice (Doubledecker, MollyThePoly, etc.)
 -- AKAI MIDIMIX support for hands-on control
 --
 -- E1: page select | E2/E3: context-sensitive
 -- K2: play/stop (page 1) | K3: restart (page 1)
 --
--- v1.2 @clf
+-- v1.3 @clf
 
 engine.name = "DrumBox"
 
@@ -18,6 +18,7 @@ local Queue = include("midi-playbox/lib/queue")
 local UILib = include("midi-playbox/lib/ui")
 local MidiMix = include("midi-playbox/lib/midimix")
 local TrackAssign = include("midi-playbox/lib/track_assign")
+local DrumKits = include("midi-playbox/lib/drum_kits")
 
 local seq = Sequencer.new()
 local queue = Queue.new()
@@ -70,8 +71,8 @@ function init()
   -- MIDI out connection (for synths)
   seq:connect_midi(1)
 
-  -- Set default drum kit
-  engine.kit(0)  -- 808
+  -- Load default drum kit samples
+  DrumKits.load(1)  -- TR-808
 
   -- Send PC 0 (init patch) to all MIDI channels on startup
   if seq.midi_out then
@@ -110,10 +111,37 @@ function init()
     midimix:connect(val)
   end)
 
-  params:add_option("drum_kit", "Drum Kit", {"808", "707", "606", "DrumTraks"}, 1)
+  params:add_option("drum_kit", "Drum Kit", DrumKits.names(), 1)
   params:set_action("drum_kit", function(val)
     state.kit = val
-    engine.kit(val - 1)
+    DrumKits.load(val)
+  end)
+
+  params:add_separator("DRUM FX")
+
+  params:add_control("drum_lpf", "Drum LPF", controlspec.new(20, 20000, "exp", 0, 20000, "Hz"))
+  params:set_action("drum_lpf", function(val)
+    engine.lpf(val)
+  end)
+
+  params:add_control("drum_res", "Drum Resonance", controlspec.new(0.05, 1.0, "lin", 0, 0.3))
+  params:set_action("drum_res", function(val)
+    engine.res(val)
+  end)
+
+  params:add_control("delay_time", "Delay Time", controlspec.new(0.01, 2.0, "exp", 0, 0.3, "s"))
+  params:set_action("delay_time", function(val)
+    engine.delay_time(val)
+  end)
+
+  params:add_control("delay_feedback", "Delay Feedback", controlspec.new(0, 0.95, "lin", 0, 0.3))
+  params:set_action("delay_feedback", function(val)
+    engine.delay_feedback(val)
+  end)
+
+  params:add_control("delay_mix", "Delay Mix", controlspec.new(0, 1, "lin", 0, 0.0))
+  params:set_action("delay_mix", function(val)
+    engine.delay_mix(val)
   end)
 
   params:add_option("track_lock", "Track Lock", {"Off", "On"}, 1)
@@ -197,7 +225,7 @@ function init()
     end
   end)
 
-  print("MIDI JUKEBOX v1.2 loaded (nb voices enabled)")
+  print("MIDI JUKEBOX v1.3 loaded (sample drums + nb voices)")
   print("MIDI dir: " .. MIDI_DIR)
   print("Files found: " .. #ui.lib_files)
 end

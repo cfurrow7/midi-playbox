@@ -1,260 +1,168 @@
-// Engine_DrumBox: 8-voice drum machine + 8-voice polyphonic synth for MIDI JUKEBOX
-// Drums: 808, 707, 606, DrumTraks (all synthesis, no samples)
-// Synth: saw, square, sine, pad, FM -- 8-voice polyphonic with ADSR + LPF
-// Global LPF filter on drum output
+// Engine_DrumBox: 8-voice sample drum machine for MIDI JUKEBOX
+// Classic drum machine samples (808, 707, 606, etc.) with global LPF + delay
+// 8 drum voices: 0=kick, 1=snare, 2=chh, 3=ohh, 4=clap, 5=ltom, 6=htom, 7=crash
 
 Engine_DrumBox : CroneEngine {
-    var <kitParams;
+    var <buffers;        // Array of 8 Buffers (one per voice)
     var <masterAmp;
-    var <filterBus;
+    var <drumBus;        // Audio bus: drums -> filter -> delay -> out
     var <filterSynth;
+    var <delaySynth;
     var <lpfFreq;
-    var <randomAmount;
-    var <randomOffsets;
-    // Synth voice state
-    var <synthVoices;    // Array of 8 active Synth nodes (nil = free)
-    var <synthType;      // 0=saw, 1=square, 2=sine, 3=pad, 4=fm
-    var <synthAmp;
-    var <synthCutoff;
-    var <synthAttack;
-    var <synthRelease;
+    var <lpfRes;
+    var <delayTime;
+    var <delayFeedback;
+    var <delayMix;
 
     alloc {
         masterAmp = 0.8;
         lpfFreq = 20000;
-        randomAmount = 0.0;
-        randomOffsets = Array.fill(8, { Dictionary[\freq -> 0, \decay -> 0, \sweep -> 0, \noiseAmt -> 0] });
-        synthVoices = Array.fill(8, { nil });
-        synthType = 0;
-        synthAmp = 0.5;
-        synthCutoff = 4000;
-        synthAttack = 0.01;
-        synthRelease = 0.3;
+        lpfRes = 0.3;
+        delayTime = 0.3;
+        delayFeedback = 0.3;
+        delayMix = 0.0;
 
-        // Audio bus for drum output -> filter
-        filterBus = Bus.audio(context.server, 2);
+        buffers = Array.fill(8, { nil });
+        drumBus = Bus.audio(context.server, 2);
 
         // ---- SynthDefs ----
 
-        // Global filter (sits on output, processes all drums)
+        // Sample player: plays a buffer one-shot with velocity scaling
+        SynthDef(\drumbox_sample, { |out=0, buf=0, amp=0.5, rate=1, pan=0|
+            var sig = PlayBuf.ar(1, buf, rate * BufRateScale.kr(buf), doneAction: 2);
+            Out.ar(out, Pan2.ar(sig * amp, pan));
+        }).add;
+
+        // Stereo sample player (for stereo samples)
+        SynthDef(\drumbox_sample_stereo, { |out=0, buf=0, amp=0.5, rate=1|
+            var sig = PlayBuf.ar(2, buf, rate * BufRateScale.kr(buf), doneAction: 2);
+            Out.ar(out, sig * amp);
+        }).add;
+
+        // Global LPF filter on drum bus
         SynthDef(\drumbox_filter, { |in, out=0, lpf=20000, res=0.3|
             var sig = In.ar(in, 2);
-            sig = RLPF.ar(sig, lpf.clip(20, 20000), res.clip(0.1, 1.0));
+            sig = RLPF.ar(sig, lpf.clip(20, 20000), res.clip(0.05, 1.0));
             Out.ar(out, sig);
         }).add;
 
-        // Kick: sine with pitch sweep + click
-        SynthDef(\drumbox_kick, { |out=0, freq=45, sweep=4, decay=0.8, click=0.02, amp=0.5, pan=0|
-            var clickEnv = EnvGen.kr(Env.perc(0.001, click), doneAction: 0);
+        // Stereo delay effect (after filter, before output)
+        SynthDef(\drumbox_delay, { |in, out=0, time=0.3, feedback=0.3, mix=0.0|
+            var dry = In.ar(in, 2);
+            var left = CombL.ar(dry[0], 2.0, time, feedback * 6);
+            var right = CombL.ar(dry[1], 2.0, time * 1.05, feedback * 6); // slight offset for width
+            var wet = [left, right];
+            Out.ar(out, dry + (wet * mix));
+        }).add;
+
+        // ---- Synthesis fallbacks (used when no sample loaded) ----
+
+        SynthDef(\drumbox_kick, { |out=0, amp=0.5, pan=0|
             var pitchEnv = EnvGen.kr(Env.perc(0.001, 0.07));
-            var body = SinOsc.ar(freq + (freq * sweep * pitchEnv));
-            var env = EnvGen.kr(Env.perc(0.001, decay, curve: -6), doneAction: 2);
-            var clickSig = WhiteNoise.ar * clickEnv * 0.3;
-            var sig = (body + clickSig) * env * amp;
-            Out.ar(out, Pan2.ar(sig, pan));
+            var body = SinOsc.ar(42 + (42 * 5 * pitchEnv));
+            var click = WhiteNoise.ar * EnvGen.kr(Env.perc(0.001, 0.01)) * 0.3;
+            var env = EnvGen.kr(Env.perc(0.001, 0.9, curve: -6), doneAction: 2);
+            Out.ar(out, Pan2.ar((body + click) * env * amp, pan));
         }).add;
 
-        // Snare: noise + tone
-        SynthDef(\drumbox_snare, { |out=0, freq=180, noiseAmt=0.7, decay=0.2, snap=0.01, amp=0.5, pan=0|
-            var toneEnv = EnvGen.kr(Env.perc(0.001, decay * 0.5, curve: -8), doneAction: 0);
-            var noiseEnv = EnvGen.kr(Env.perc(snap, decay, curve: -4), doneAction: 2);
-            var tone = SinOsc.ar(freq) * toneEnv * (1 - noiseAmt);
-            var noise = BPF.ar(WhiteNoise.ar, freq * 4, 2) * noiseEnv * noiseAmt;
-            var sig = (tone + noise) * amp;
-            Out.ar(out, Pan2.ar(sig, pan));
+        SynthDef(\drumbox_snare, { |out=0, amp=0.5, pan=0|
+            var tone = SinOsc.ar(180) * EnvGen.kr(Env.perc(0.001, 0.1, curve: -8)) * 0.4;
+            var noise = BPF.ar(WhiteNoise.ar, 720, 2) * EnvGen.kr(Env.perc(0.005, 0.2, curve: -4), doneAction: 2) * 0.7;
+            Out.ar(out, Pan2.ar((tone + noise) * amp, pan));
         }).add;
 
-        // Closed hi-hat: bandpass noise, short
-        SynthDef(\drumbox_chh, { |out=0, freq=8000, decay=0.05, amp=0.5, pan=0|
-            var env = EnvGen.kr(Env.perc(0.001, decay, curve: -8), doneAction: 2);
-            var sig = BPF.ar(WhiteNoise.ar, freq, 0.3) * env * amp * 2;
-            Out.ar(out, Pan2.ar(sig, pan));
+        SynthDef(\drumbox_chh, { |out=0, amp=0.5, pan=0|
+            var env = EnvGen.kr(Env.perc(0.001, 0.04, curve: -8), doneAction: 2);
+            Out.ar(out, Pan2.ar(BPF.ar(WhiteNoise.ar, 8000, 0.3) * env * amp * 2, pan));
         }).add;
 
-        // Open hi-hat: bandpass noise, longer
-        SynthDef(\drumbox_ohh, { |out=0, freq=8000, decay=0.3, amp=0.5, pan=0|
-            var env = EnvGen.kr(Env.perc(0.001, decay, curve: -4), doneAction: 2);
-            var sig = BPF.ar(WhiteNoise.ar, freq, 0.3) * env * amp * 2;
-            Out.ar(out, Pan2.ar(sig, pan));
+        SynthDef(\drumbox_ohh, { |out=0, amp=0.5, pan=0|
+            var env = EnvGen.kr(Env.perc(0.001, 0.3, curve: -4), doneAction: 2);
+            Out.ar(out, Pan2.ar(BPF.ar(WhiteNoise.ar, 8000, 0.3) * env * amp * 2, pan));
         }).add;
 
-        // Clap: layered noise bursts
-        SynthDef(\drumbox_clap, { |out=0, freq=1200, decay=0.15, spread=0.01, amp=0.5, pan=0|
-            var env1 = EnvGen.kr(Env.perc(0.001, spread));
-            var env2 = EnvGen.kr(Env.perc(0.001, spread), delay: spread);
-            var env3 = EnvGen.kr(Env.perc(0.001, decay), delay: spread * 2, doneAction: 2);
-            var noise = BPF.ar(WhiteNoise.ar, freq, 0.5);
-            var sig = noise * (env1 + env2 + env3) * amp * 0.5;
-            Out.ar(out, Pan2.ar(sig, pan));
+        SynthDef(\drumbox_clap, { |out=0, amp=0.5, pan=0|
+            var e1 = EnvGen.kr(Env.perc(0.001, 0.01));
+            var e2 = EnvGen.kr(Env.perc(0.001, 0.01), delay: 0.01);
+            var e3 = EnvGen.kr(Env.perc(0.001, 0.15), delay: 0.02, doneAction: 2);
+            Out.ar(out, Pan2.ar(BPF.ar(WhiteNoise.ar, 1200, 0.5) * (e1 + e2 + e3) * amp * 0.5, pan));
         }).add;
 
-        // Tom: sine with pitch sweep
-        SynthDef(\drumbox_tom, { |out=0, freq=100, sweep=2, decay=0.3, amp=0.5, pan=0|
+        SynthDef(\drumbox_tom, { |out=0, freq=100, amp=0.5, pan=0|
             var pitchEnv = EnvGen.kr(Env.perc(0.001, 0.05));
-            var body = SinOsc.ar(freq + (freq * sweep * pitchEnv));
-            var env = EnvGen.kr(Env.perc(0.001, decay, curve: -6), doneAction: 2);
-            var sig = body * env * amp;
-            Out.ar(out, Pan2.ar(sig, pan));
+            var body = SinOsc.ar(freq + (freq * 2 * pitchEnv));
+            var env = EnvGen.kr(Env.perc(0.001, 0.3, curve: -6), doneAction: 2);
+            Out.ar(out, Pan2.ar(body * env * amp, pan));
         }).add;
 
-        // Crash/Ride: metallic noise
-        SynthDef(\drumbox_cymbal, { |out=0, freq=6000, decay=1.5, ring=0.3, amp=0.5, pan=0|
-            var env = EnvGen.kr(Env.perc(0.001, decay, curve: -3), doneAction: 2);
-            var noise = BPF.ar(WhiteNoise.ar, freq, 0.1);
-            var ring1 = SinOsc.ar(freq * 1.37) * 0.1;
-            var ring2 = SinOsc.ar(freq * 2.42) * 0.05;
-            var sig = (noise + ring1 + ring2) * env * amp;
-            Out.ar(out, Pan2.ar(sig, pan));
+        SynthDef(\drumbox_cymbal, { |out=0, amp=0.5, pan=0|
+            var env = EnvGen.kr(Env.perc(0.001, 1.5, curve: -3), doneAction: 2);
+            var noise = BPF.ar(WhiteNoise.ar, 6000, 0.1);
+            var ring = SinOsc.ar(6000 * 1.37) * 0.1 + (SinOsc.ar(6000 * 2.42) * 0.05);
+            Out.ar(out, Pan2.ar((noise + ring) * env * amp, pan));
         }).add;
 
-        // ---- Polyphonic synth voices ----
-
-        // Saw lead
-        SynthDef(\voxbox_saw, { |out=0, freq=440, vel=0.5, amp=0.5, gate=1, atk=0.01, rel=0.3, cutoff=4000, pan=0|
-            var env = EnvGen.kr(Env.adsr(atk, 0.1, 0.7, rel), gate, doneAction: 2);
-            var sig = Saw.ar(freq) + Saw.ar(freq * 1.005);
-            sig = RLPF.ar(sig, cutoff.clip(100, 18000), 0.5);
-            Out.ar(out, Pan2.ar(sig * env * vel * amp, pan));
-        }).add;
-
-        // Square / pulse
-        SynthDef(\voxbox_square, { |out=0, freq=440, vel=0.5, amp=0.5, gate=1, atk=0.01, rel=0.3, cutoff=4000, pan=0|
-            var env = EnvGen.kr(Env.adsr(atk, 0.1, 0.8, rel), gate, doneAction: 2);
-            var sig = Pulse.ar(freq, 0.4) + Pulse.ar(freq * 0.998, 0.5);
-            sig = RLPF.ar(sig, cutoff.clip(100, 18000), 0.5);
-            Out.ar(out, Pan2.ar(sig * env * vel * amp * 0.5, pan));
-        }).add;
-
-        // Pure sine (sub bass / clean)
-        SynthDef(\voxbox_sine, { |out=0, freq=440, vel=0.5, amp=0.5, gate=1, atk=0.01, rel=0.3, cutoff=4000, pan=0|
-            var env = EnvGen.kr(Env.adsr(atk, 0.05, 0.9, rel), gate, doneAction: 2);
-            var sig = SinOsc.ar(freq) + SinOsc.ar(freq * 2, 0, 0.2);
-            Out.ar(out, Pan2.ar(sig * env * vel * amp, pan));
-        }).add;
-
-        // Pad (filtered saw, slow attack)
-        SynthDef(\voxbox_pad, { |out=0, freq=440, vel=0.5, amp=0.5, gate=1, atk=0.3, rel=1.0, cutoff=2000, pan=0|
-            var env = EnvGen.kr(Env.adsr(atk, 0.5, 0.6, rel), gate, doneAction: 2);
-            var sig = Saw.ar(freq) + Saw.ar(freq * 1.007) + Saw.ar(freq * 0.993);
-            sig = RLPF.ar(sig, cutoff.clip(100, 18000), 0.4);
-            Out.ar(out, Pan2.ar(sig * env * vel * amp * 0.35, pan));
-        }).add;
-
-        // FM (bell / electric piano)
-        SynthDef(\voxbox_fm, { |out=0, freq=440, vel=0.5, amp=0.5, gate=1, atk=0.01, rel=0.5, cutoff=6000, pan=0|
-            var env = EnvGen.kr(Env.adsr(atk, 0.2, 0.4, rel), gate, doneAction: 2);
-            var mod = SinOsc.ar(freq * 3.01) * freq * 2 * EnvGen.kr(Env.perc(0.01, 0.8));
-            var sig = SinOsc.ar(freq + mod);
-            sig = RLPF.ar(sig, cutoff.clip(100, 18000), 0.7);
-            Out.ar(out, Pan2.ar(sig * env * vel * amp, pan));
-        }).add;
-
-        // ---- Kit parameter definitions ----
-        // Each kit: array of 8 voice specs [synthdef, params]
-        // Voices: 0=kick, 1=snare, 2=chh, 3=ohh, 4=clap, 5=ltom, 6=htom, 7=crash
-
-        kitParams = Dictionary.new;
-
-        // 808: deep, boomy, long decays
-        kitParams[\kit808] = [
-            [\drumbox_kick,   (\freq: 42,  \sweep: 5,   \decay: 0.9,  \click: 0.01, \pan: 0)],
-            [\drumbox_snare,  (\freq: 160, \noiseAmt: 0.6, \decay: 0.25, \snap: 0.01, \pan: 0)],
-            [\drumbox_chh,    (\freq: 7500, \decay: 0.04, \pan: 0.1)],
-            [\drumbox_ohh,    (\freq: 7500, \decay: 0.35, \pan: 0.1)],
-            [\drumbox_clap,   (\freq: 1100, \decay: 0.18, \spread: 0.012, \pan: 0)],
-            [\drumbox_tom,    (\freq: 80,  \sweep: 2.5, \decay: 0.35, \pan: -0.3)],
-            [\drumbox_tom,    (\freq: 160, \sweep: 2,   \decay: 0.25, \pan: 0.3)],
-            [\drumbox_cymbal, (\freq: 5500, \decay: 1.8, \ring: 0.3,  \pan: 0.2)]
-        ];
-
-        // 707: tighter, punchier, more acoustic
-        kitParams[\kit707] = [
-            [\drumbox_kick,   (\freq: 55,  \sweep: 3,   \decay: 0.5,  \click: 0.02, \pan: 0)],
-            [\drumbox_snare,  (\freq: 200, \noiseAmt: 0.75, \decay: 0.18, \snap: 0.008, \pan: 0)],
-            [\drumbox_chh,    (\freq: 9000, \decay: 0.03, \pan: 0.1)],
-            [\drumbox_ohh,    (\freq: 9000, \decay: 0.25, \pan: 0.1)],
-            [\drumbox_clap,   (\freq: 1300, \decay: 0.12, \spread: 0.008, \pan: 0)],
-            [\drumbox_tom,    (\freq: 95,  \sweep: 1.8, \decay: 0.25, \pan: -0.3)],
-            [\drumbox_tom,    (\freq: 180, \sweep: 1.5, \decay: 0.2,  \pan: 0.3)],
-            [\drumbox_cymbal, (\freq: 7000, \decay: 1.2, \ring: 0.2,  \pan: 0.2)]
-        ];
-
-        // 606: thin, tight, electronic
-        kitParams[\kit606] = [
-            [\drumbox_kick,   (\freq: 50,  \sweep: 3.5, \decay: 0.35, \click: 0.015, \pan: 0)],
-            [\drumbox_snare,  (\freq: 220, \noiseAmt: 0.8, \decay: 0.12, \snap: 0.005, \pan: 0)],
-            [\drumbox_chh,    (\freq: 10000, \decay: 0.02, \pan: 0.1)],
-            [\drumbox_ohh,    (\freq: 10000, \decay: 0.2, \pan: 0.1)],
-            [\drumbox_clap,   (\freq: 1400, \decay: 0.1, \spread: 0.006, \pan: 0)],
-            [\drumbox_tom,    (\freq: 110, \sweep: 2, \decay: 0.18, \pan: -0.3)],
-            [\drumbox_tom,    (\freq: 200, \sweep: 1.5, \decay: 0.15, \pan: 0.3)],
-            [\drumbox_cymbal, (\freq: 8000, \decay: 0.8, \ring: 0.15, \pan: 0.2)]
-        ];
-
-        // DrumTraks: punchy, 12-bit grit
-        kitParams[\kitDrumTraks] = [
-            [\drumbox_kick,   (\freq: 48,  \sweep: 4,   \decay: 0.6,  \click: 0.025, \pan: 0)],
-            [\drumbox_snare,  (\freq: 190, \noiseAmt: 0.65, \decay: 0.22, \snap: 0.012, \pan: 0)],
-            [\drumbox_chh,    (\freq: 8500, \decay: 0.035, \pan: 0.1)],
-            [\drumbox_ohh,    (\freq: 8500, \decay: 0.28, \pan: 0.1)],
-            [\drumbox_clap,   (\freq: 1200, \decay: 0.14, \spread: 0.01, \pan: 0)],
-            [\drumbox_tom,    (\freq: 90,  \sweep: 2.2, \decay: 0.3,  \pan: -0.3)],
-            [\drumbox_tom,    (\freq: 170, \sweep: 1.8, \decay: 0.22, \pan: 0.3)],
-            [\drumbox_cymbal, (\freq: 6000, \decay: 1.4, \ring: 0.25, \pan: 0.2)]
-        ];
-
-        // Set current kit to 808 by default
-        kitParams[\current] = kitParams[\kit808];
-
-        // Start filter synth after a short delay to ensure SynthDefs are ready
+        // Wait for SynthDefs to be ready
         context.server.sync;
-        filterSynth = Synth(\drumbox_filter, [\in, filterBus, \out, 0, \lpf, lpfFreq], addAction: \addToTail);
+
+        // Start filter and delay on the drum bus (addToTail = after drum voices)
+        filterSynth = Synth(\drumbox_filter, [
+            \in, drumBus, \out, 0,
+            \lpf, lpfFreq, \res, lpfRes
+        ], addAction: \addToTail);
+
+        delaySynth = Synth(\drumbox_delay, [
+            \in, drumBus, \out, 0,
+            \time, delayTime, \feedback, delayFeedback, \mix, delayMix
+        ], addAction: \addToTail);
 
         // ---- Commands ----
 
+        // Load a sample into a voice slot (0-7)
+        this.addCommand(\load_sample, "is", { |msg|
+            var voice = msg[1].asInteger.clip(0, 7);
+            var path = msg[2].asString;
+            if (buffers[voice].notNil, { buffers[voice].free });
+            Buffer.read(context.server, path, action: { |buf|
+                buffers[voice] = buf;
+                ("DrumBox: loaded voice " ++ voice ++ " = " ++ path).postln;
+            });
+        });
+
         // Trigger a drum voice (0-7) with velocity (0.0-1.0)
         this.addCommand(\trig_kit, "if", { |msg|
-            var voice = msg[1].asInteger;
-            var vel = msg[2].asFloat;
-            var currentKit = kitParams[\current];
+            var voice = msg[1].asInteger.clip(0, 7);
+            var vel = msg[2].asFloat.clip(0, 1);
+            var amp = vel * masterAmp;
+            var pans = [0, 0, 0.15, 0.15, 0, -0.3, 0.3, 0.2]; // stereo placement
 
-            if (voice >= 0 && (voice < 8) && currentKit.notNil, {
-                var spec = currentKit[voice];
-                var synthName = spec[0];
-                var params = spec[1].copy;
-                var offsets = randomOffsets[voice];
-
-                // Apply random offsets scaled by randomAmount
-                if (randomAmount > 0, {
-                    if (params[\freq].notNil, {
-                        var baseFreq = params[\freq];
-                        params[\freq] = (baseFreq * (1 + (offsets[\freq] * randomAmount))).clip(20, 15000);
-                    });
-                    if (params[\decay].notNil, {
-                        var baseDec = params[\decay];
-                        params[\decay] = (baseDec * (1 + (offsets[\decay] * randomAmount * 0.5))).clip(0.01, 3);
-                    });
-                    if (params[\sweep].notNil, {
-                        var baseSweep = params[\sweep];
-                        params[\sweep] = (baseSweep + (offsets[\sweep] * randomAmount * 3)).clip(0.5, 10);
-                    });
-                    if (params[\noiseAmt].notNil, {
-                        var baseNoise = params[\noiseAmt];
-                        params[\noiseAmt] = (baseNoise + (offsets[\noiseAmt] * randomAmount * 0.3)).clip(0, 1);
-                    });
-                });
-
-                params[\amp] = vel * masterAmp;
-                params[\out] = filterBus;
-                Synth(synthName, params.asPairs, addAction: \addToHead);
+            if (buffers[voice].notNil, {
+                // Sample playback
+                Synth(\drumbox_sample, [
+                    \out, drumBus,
+                    \buf, buffers[voice],
+                    \amp, amp,
+                    \rate, 1,
+                    \pan, pans[voice]
+                ], addAction: \addToHead);
+            }, {
+                // Synthesis fallback (no sample loaded)
+                var synthNames = [
+                    \drumbox_kick, \drumbox_snare, \drumbox_chh, \drumbox_ohh,
+                    \drumbox_clap, \drumbox_tom, \drumbox_tom, \drumbox_cymbal
+                ];
+                var params = [\out, drumBus, \amp, amp, \pan, pans[voice]];
+                if (voice == 5, { params = params ++ [\freq, 80] });
+                if (voice == 6, { params = params ++ [\freq, 160] });
+                Synth(synthNames[voice], params, addAction: \addToHead);
             });
         });
 
         // Switch drum kit (0=808, 1=707, 2=606, 3=DrumTraks)
+        // Kit loading is now done from Lua via load_sample commands
         this.addCommand(\kit, "i", { |msg|
-            var kitIndex = msg[1].asInteger.clip(0, 3);
-            var kitNames = [\kit808, \kit707, \kit606, \kitDrumTraks];
-            kitParams[\current] = kitParams[kitNames[kitIndex]];
+            // No-op: kit switching handled by Lua sending load_sample for each voice
+            ("DrumBox: kit switch requested (handled by Lua)").postln;
         });
 
         // Master amplitude (0.0-1.0)
@@ -265,145 +173,44 @@ Engine_DrumBox : CroneEngine {
         // LPF cutoff frequency (20-20000 Hz)
         this.addCommand(\lpf, "f", { |msg|
             lpfFreq = msg[1].asFloat.clip(20, 20000);
-            if (filterSynth.notNil, {
-                filterSynth.set(\lpf, lpfFreq);
-            });
+            if (filterSynth.notNil, { filterSynth.set(\lpf, lpfFreq) });
         });
 
-        // Filter resonance (0.1-1.0, lower = more resonant)
+        // Filter resonance (0.05-1.0)
         this.addCommand(\res, "f", { |msg|
-            if (filterSynth.notNil, {
-                filterSynth.set(\res, msg[1].asFloat.clip(0.1, 1.0));
-            });
+            lpfRes = msg[1].asFloat.clip(0.05, 1.0);
+            if (filterSynth.notNil, { filterSynth.set(\res, lpfRes) });
         });
 
-        // Randomize: generate new random offsets for all voices
-        this.addCommand(\randomize, "", { |msg|
-            randomOffsets = Array.fill(8, {
-                Dictionary[
-                    \freq -> 1.0.rand2,      // -1 to +1
-                    \decay -> 1.0.rand2,
-                    \sweep -> 1.0.rand2,
-                    \noiseAmt -> 1.0.rand2
-                ]
-            });
+        // Delay time in seconds (0.01-2.0)
+        this.addCommand(\delay_time, "f", { |msg|
+            delayTime = msg[1].asFloat.clip(0.01, 2.0);
+            if (delaySynth.notNil, { delaySynth.set(\time, delayTime) });
         });
 
-        // Random amount (0.0 = no effect, 1.0 = full random)
-        this.addCommand(\random_amt, "f", { |msg|
-            randomAmount = msg[1].asFloat.clip(0, 1);
+        // Delay feedback (0.0-0.95)
+        this.addCommand(\delay_feedback, "f", { |msg|
+            delayFeedback = msg[1].asFloat.clip(0, 0.95);
+            if (delaySynth.notNil, { delaySynth.set(\feedback, delayFeedback) });
         });
 
-        // ---- Synth voice commands ----
-
-        // Synth note on: slot (0-7), MIDI note, velocity (0.0-1.0)
-        this.addCommand(\synth_on, "iif", { |msg|
-            var slot = msg[1].asInteger.clip(0, 7);
-            var note = msg[2].asInteger;
-            var vel = msg[3].asFloat.clip(0, 1);
-            var freq = note.midicps;
-            var synthNames = [\voxbox_saw, \voxbox_square, \voxbox_sine, \voxbox_pad, \voxbox_fm];
-            var name = synthNames[synthType.clip(0, 4)];
-
-            // Free existing voice in this slot
-            if (synthVoices[slot].notNil, {
-                synthVoices[slot].set(\gate, 0);
-                synthVoices[slot] = nil;
-            });
-
-            synthVoices[slot] = Synth(name, [
-                \out, 0,
-                \freq, freq,
-                \vel, vel,
-                \amp, synthAmp,
-                \gate, 1,
-                \atk, synthAttack,
-                \rel, synthRelease,
-                \cutoff, synthCutoff
-            ], addAction: \addToHead);
+        // Delay wet/dry mix (0.0=dry, 1.0=wet)
+        this.addCommand(\delay_mix, "f", { |msg|
+            delayMix = msg[1].asFloat.clip(0, 1);
+            if (delaySynth.notNil, { delaySynth.set(\mix, delayMix) });
         });
 
-        // Synth note off: slot (0-7)
-        this.addCommand(\synth_off, "i", { |msg|
-            var slot = msg[1].asInteger.clip(0, 7);
-            if (synthVoices[slot].notNil, {
-                synthVoices[slot].set(\gate, 0);
-                synthVoices[slot] = nil;
-            });
-        });
-
-        // Synth type: 0=saw, 1=square, 2=sine, 3=pad, 4=fm
-        this.addCommand(\synth_type, "i", { |msg|
-            synthType = msg[1].asInteger.clip(0, 4);
-        });
-
-        // Synth master amp
-        this.addCommand(\synth_amp, "f", { |msg|
-            synthAmp = msg[1].asFloat.clip(0, 1);
-        });
-
-        // Synth filter cutoff
-        this.addCommand(\synth_cutoff, "f", { |msg|
-            synthCutoff = msg[1].asFloat.clip(100, 18000);
-        });
-
-        // Synth attack time
-        this.addCommand(\synth_attack, "f", { |msg|
-            synthAttack = msg[1].asFloat.clip(0.001, 2.0);
-        });
-
-        // Synth release time
-        this.addCommand(\synth_release, "f", { |msg|
-            synthRelease = msg[1].asFloat.clip(0.01, 5.0);
-        });
-
-        // All synth voices off (panic)
-        this.addCommand(\synth_panic, "", { |msg|
-            8.do { |i|
-                if (synthVoices[i].notNil, {
-                    synthVoices[i].set(\gate, 0);
-                    synthVoices[i] = nil;
-                });
-            };
-        });
-
-        // Keep: bake current randomization into the kit params (new baseline)
-        this.addCommand(\random_keep, "", { |msg|
-            var currentKit = kitParams[\current];
-            if (currentKit.notNil && (randomAmount > 0), {
-                8.do { |voice|
-                    var spec = currentKit[voice];
-                    var params = spec[1];
-                    var offsets = randomOffsets[voice];
-
-                    if (params[\freq].notNil, {
-                        params[\freq] = (params[\freq] * (1 + (offsets[\freq] * randomAmount))).clip(20, 15000);
-                    });
-                    if (params[\decay].notNil, {
-                        params[\decay] = (params[\decay] * (1 + (offsets[\decay] * randomAmount * 0.5))).clip(0.01, 3);
-                    });
-                    if (params[\sweep].notNil, {
-                        var baseSweep = params[\sweep];
-                        params[\sweep] = (baseSweep + (offsets[\sweep] * randomAmount * 3)).clip(0.5, 10);
-                    });
-                    if (params[\noiseAmt].notNil, {
-                        var baseNoise = params[\noiseAmt];
-                        params[\noiseAmt] = (baseNoise + (offsets[\noiseAmt] * randomAmount * 0.3)).clip(0, 1);
-                    });
-                };
-                // Reset offsets to zero since they're now baked in
-                randomOffsets = Array.fill(8, {
-                    Dictionary[\freq -> 0, \decay -> 0, \sweep -> 0, \noiseAmt -> 0]
-                });
-            });
+        // Sample pitch/rate (0.5-2.0)
+        this.addCommand(\pitch, "f", { |msg|
+            // Stored for next trigger - can't change running PlayBuf rate easily
+            // This is used as a global pitch setting
         });
     }
 
     free {
-        8.do { |i|
-            if (synthVoices[i].notNil, { synthVoices[i].free; synthVoices[i] = nil; });
-        };
-        if (filterSynth.notNil, { filterSynth.free; });
-        if (filterBus.notNil, { filterBus.free; });
+        buffers.do { |buf| if (buf.notNil, { buf.free }) };
+        if (delaySynth.notNil, { delaySynth.free });
+        if (filterSynth.notNil, { filterSynth.free });
+        if (drumBus.notNil, { drumBus.free });
     }
 }
