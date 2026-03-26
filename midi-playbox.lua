@@ -167,7 +167,7 @@ function init()
     seq:reassign_channels()
   end)
 
-  params:add_number("lead_ch", "Lead Ch", 1, 16, 10)
+  params:add_number("lead_ch", "Lead Ch", 1, 16, 3)
   params:set_action("lead_ch", function(val)
     TrackAssign.set_channel("lead", val)
     seq:reassign_channels()

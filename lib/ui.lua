@@ -25,7 +25,7 @@ function UI.new(sequencer, queue, state)
   -- Track setup page state
   self.track_cursor = 1
   self.track_scroll = 0
-  self.track_field = 1  -- 1=output ch, 2=octave, 3=output mode
+  self.track_field = 1  -- 1=output (unified ch1-16/nb/drm/off), 2=octave
 
   -- Drums page state
   self.drum_cursor = 1
@@ -406,6 +406,31 @@ function UI:draw_play()
   end
 end
 
+-- Unified output positions: 1-16 = MIDI ch, 17 = nb, 18 = DRM, 19 = OFF
+local function track_to_out_pos(track)
+  if track.output == "off" then return 19
+  elseif track.output == "internal" then return 18
+  elseif track.output == "nb" then return 17
+  else return track.out_channels[1] or 1
+  end
+end
+
+local function apply_out_pos(track, pos)
+  if pos >= 1 and pos <= 16 then
+    track.output = "midi"
+    track.out_channels = {pos}
+  elseif pos == 17 then
+    track.output = "nb"
+    track.out_channels = {0}
+  elseif pos == 18 then
+    track.output = "internal"
+    track.out_channels = {0}
+  else
+    track.output = "off"
+    track.out_channels = {0}
+  end
+end
+
 function UI:draw_tracks()
   local tc = self.seq:track_count()
   if tc == 0 then
@@ -442,20 +467,15 @@ function UI:draw_tracks()
     if #name > 8 then name = name:sub(1, 7) .. "." end
     screen.text(name)
 
-    -- Output
+    -- Output (unified: ch1-16, nb, DRM, OFF)
     screen.level(selected and self.track_field == 1 and 15 or 6)
     screen.move(72, y + 6)
+    local pos = track_to_out_pos(track)
     local out_str
-    if track.output == "off" then
-      out_str = "OFF"
-    elseif track.output == "internal" then
-      out_str = "DRM"
-    elseif #track.out_channels == 16 then
-      out_str = "ALL"
-    elseif #track.out_channels == 2 then
-      out_str = track.out_channels[1] .. "+" .. track.out_channels[2]
-    else
-      out_str = "ch" .. track.out_channels[1]
+    if pos <= 16 then out_str = "ch" .. pos
+    elseif pos == 17 then out_str = "nb"
+    elseif pos == 18 then out_str = "DRM"
+    else out_str = "OFF"
     end
     screen.text(out_str)
 
@@ -676,12 +696,10 @@ function UI:enc_tracks(n, d)
     if not track then return end
 
     if self.track_field == 1 then
-      -- Adjust primary output channel
-      if track.output == "midi" and #track.out_channels < 16 then
-        local ch = track.out_channels[1] + d
-        ch = util.clamp(ch, 1, 16)
-        track.out_channels[1] = ch
-      end
+      -- Unified output: ch1-16, nb, DRM, OFF
+      local pos = track_to_out_pos(track)
+      pos = util.clamp(pos + d, 1, 19)
+      apply_out_pos(track, pos)
     elseif self.track_field == 2 then
       -- Adjust octave
       if track.output ~= "internal" then
@@ -798,11 +816,11 @@ end
 
 function UI:key_tracks(n)
   if n == 2 then
-    -- Cycle field: output ch -> octave -> output mode
-    self.track_field = (self.track_field % 3) + 1
+    -- Toggle field: output <-> octave
+    self.track_field = (self.track_field == 1) and 2 or 1
   elseif n == 3 then
-    -- Cycle output mode for selected track
-    self.seq:cycle_output(self.track_cursor)
+    -- Toggle mute for selected track
+    self.seq:toggle_mute(self.track_cursor)
   end
 end
 

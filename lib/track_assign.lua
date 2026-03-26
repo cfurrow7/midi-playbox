@@ -4,10 +4,12 @@
 
 local TrackAssign = {}
 
--- Role detection patterns (from PMS)
+-- Role detection patterns - checked in priority order (bass before chord,
+-- so "bass guitar" matches bass not guitar/chord)
+local role_priority = { "drum", "bass", "lead", "fx", "chord" }
 local role_patterns = {
   drum = { "drum", "perc", "kit", "beat", "cymbal", "snare", "kick", "hat" },
-  bass = { "bass" },
+  bass = { "bass", "fretless", "fingered", "slap" },
   lead = { "lead", "melody", "solo", "vocal", "voice", "flute", "trumpet", "sax", "whistle" },
   chord = { "chord", "pad", "organ", "piano", "key", "string", "acoustic", "rhythm", "guitar", "harp" },
   fx = { "fx", "effect", "noise", "texture", "arp" },
@@ -34,12 +36,12 @@ for n = 58, 81 do
   end
 end
 
--- Guess role from track name
+-- Guess role from track name (checked in priority order so "bass guitar" -> bass)
 local function guess_role(name)
   if not name then return nil end
   local lower = string.lower(name)
-  for role, patterns in pairs(role_patterns) do
-    for _, pat in ipairs(patterns) do
+  for _, role in ipairs(role_priority) do
+    for _, pat in ipairs(role_patterns[role]) do
       if string.find(lower, pat, 1, true) then
         return role
       end
@@ -48,9 +50,10 @@ local function guess_role(name)
   return nil
 end
 
--- Guess role from note range
+-- Guess role from note range (uses median note for better classification)
 local function guess_role_from_range(ch_info)
-  if ch_info.max_note <= 55 then
+  local median = math.floor((ch_info.min_note + ch_info.max_note) / 2)
+  if median <= 55 then
     return "bass"
   elseif ch_info.min_note >= 60 then
     return "lead"
