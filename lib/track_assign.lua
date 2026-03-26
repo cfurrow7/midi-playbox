@@ -65,9 +65,9 @@ end
 -- These are the defaults; override with TrackAssign.set_channel()
 local ROLE_CHANNEL_POOL = {
   bass  = {2},
-  chord = {4, 11},
-  lead  = {10, 3},
-  fx    = {4, 11},
+  chord = {4},
+  lead  = {10},
+  fx    = {4},
 }
 local DRUM_CH = 15
 

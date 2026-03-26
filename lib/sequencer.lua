@@ -183,35 +183,24 @@ function Sequencer:route_event(event)
         end
       end
     end
-  elseif track.output == "synth" then
-    -- Route to internal polyphonic synth engine
+  elseif track.output == "nb" then
+    -- Route to nb voice (Doubledecker, MollyThePoly, PolyPerc, etc.)
     local note = event.note + (track.octave or 0) * 12
     note = math.max(0, math.min(127, note))
 
-    if event.type == "note_on" and event.velocity > 0 then
-      local scale = track.velocity_scale or 1.0
-      if scale <= 0.01 then return end
-      local vel = (event.velocity / 127) * scale
-
-      -- Allocate a voice slot (round-robin, 8 slots)
-      local slot = self.synth_next_slot
-      -- Check if this note is already playing, reuse that slot
-      if self.synth_note_map[note] then
-        slot = self.synth_note_map[note]
-      else
-        self.synth_next_slot = (self.synth_next_slot + 1) % 8
-      end
-      self.synth_note_map[note] = slot
-      engine.synth_on(slot, note, vel)
-
-      if self.on_note then
-        self.on_note(track_idx, note, math.floor(event.velocity * scale))
-      end
-    elseif event.type == "note_off" or (event.type == "note_on" and event.velocity == 0) then
-      local slot = self.synth_note_map[note]
-      if slot then
-        engine.synth_off(slot)
-        self.synth_note_map[note] = nil
+    -- get_nb_player is defined in main script
+    local player = get_nb_player and get_nb_player(track_idx)
+    if player then
+      if event.type == "note_on" and event.velocity > 0 then
+        local scale = track.velocity_scale or 1.0
+        if scale <= 0.01 then return end
+        local vel = (event.velocity / 127) * scale
+        player:note_on(note, vel)
+        if self.on_note then
+          self.on_note(track_idx, note, math.floor(event.velocity * scale))
+        end
+      elseif event.type == "note_off" or (event.type == "note_on" and event.velocity == 0) then
+        player:note_off(note)
       end
     end
   elseif track.output == "midi" then
@@ -249,10 +238,11 @@ function Sequencer:route_event(event)
 end
 
 function Sequencer:all_notes_off()
-  -- Kill internal synth voices
-  engine.synth_panic()
-  self.synth_note_map = {}
-  self.synth_next_slot = 0
+  -- Kill nb voices
+  for i = 1, 8 do
+    local player = get_nb_player and get_nb_player(i)
+    if player and player.stop_all then player:stop_all() end
+  end
 
   if self.midi_out then
     for _, an in ipairs(self.active_notes) do

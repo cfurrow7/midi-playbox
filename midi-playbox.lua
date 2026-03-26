@@ -2,16 +2,17 @@
 -- Dynamic track MIDI song player with built-in drum machine
 -- Auto-assigns MIDI channels to roles (bass/chord/lead/drum/fx)
 -- Drum tracks -> internal synthesized drums (808/707/606/DrumTraks)
--- Synth tracks -> MIDI out to hardware
+-- Synth tracks -> MIDI out, or nb voice (Doubledecker, MollyThePoly, etc.)
 -- AKAI MIDIMIX support for hands-on control
 --
 -- E1: page select | E2/E3: context-sensitive
 -- K2: play/stop (page 1) | K3: restart (page 1)
 --
--- v1.1 @clf
+-- v1.2 @clf
 
 engine.name = "DrumBox"
 
+local nb = require("nb/lib/nb")
 local Sequencer = include("midi-playbox/lib/sequencer")
 local Queue = include("midi-playbox/lib/queue")
 local UILib = include("midi-playbox/lib/ui")
@@ -24,6 +25,9 @@ local midimix = MidiMix.new()
 local ui
 local state = {}
 
+-- Max tracks with nb voice selectors
+local MAX_NB_TRACKS = 8
+
 -- Shared MIDI folder accessible by all Norns scripts
 local MIDI_DIR = _path.data .. "midi"
 local PLAYLIST_DIR = _path.code .. "midi-playbox/playlists"
@@ -33,6 +37,9 @@ local redraw_clock = nil
 function init()
   -- Create shared MIDI folder if it doesn't exist
   os.execute("mkdir -p " .. MIDI_DIR)
+
+  -- Init nb voice system
+  nb:init()
 
   state.kit = 1  -- 808
   state.midi_dir = MIDI_DIR
@@ -133,32 +140,13 @@ function init()
     seq:reassign_channels()
   end)
 
-  params:add_separator("NORNS SYNTH")
+  -- ===== NB VOICES (per track) =====
+  params:add_separator("TRACK VOICES")
 
-  params:add_option("synth_type", "Synth Voice", {"Saw", "Square", "Sine", "Pad", "FM"}, 1)
-  params:set_action("synth_type", function(val)
-    engine.synth_type(val - 1)
-  end)
-
-  params:add_control("synth_cutoff", "Synth Cutoff", controlspec.new(100, 18000, 'exp', 0, 4000, 'Hz'))
-  params:set_action("synth_cutoff", function(val)
-    engine.synth_cutoff(val)
-  end)
-
-  params:add_control("synth_attack", "Synth Attack", controlspec.new(0.001, 2.0, 'exp', 0, 0.01, 's'))
-  params:set_action("synth_attack", function(val)
-    engine.synth_attack(val)
-  end)
-
-  params:add_control("synth_release", "Synth Release", controlspec.new(0.01, 5.0, 'exp', 0, 0.3, 's'))
-  params:set_action("synth_release", function(val)
-    engine.synth_release(val)
-  end)
-
-  params:add_control("synth_amp", "Synth Volume", controlspec.new(0, 1, 'lin', 0, 0.5))
-  params:set_action("synth_amp", function(val)
-    engine.synth_amp(val)
-  end)
+  for i = 1, MAX_NB_TRACKS do
+    nb:add_param("track_" .. i .. "_voice", "Track " .. i .. " Voice")
+  end
+  nb:add_player_params()
 
   params:add_separator("MIDI FILTER")
 
@@ -198,9 +186,17 @@ function init()
     end
   end)
 
-  print("MIDI JUKEBOX v1.1 loaded")
+  print("MIDI JUKEBOX v1.2 loaded (nb voices enabled)")
   print("MIDI dir: " .. MIDI_DIR)
   print("Files found: " .. #ui.lib_files)
+end
+
+-- Get nb player for a track (returns nil if not set to nb)
+function get_nb_player(track_idx)
+  if track_idx < 1 or track_idx > MAX_NB_TRACKS then return nil end
+  local p = params:lookup_param("track_" .. track_idx .. "_voice")
+  if p then return p:get_player() end
+  return nil
 end
 
 function setup_midimix()
@@ -219,15 +215,15 @@ function setup_midimix()
   end
 
   -- Knob Row 1 (1-8): MIDI output channel per track
-  -- ch 1-15 = MIDI out, ch 16 = internal norns synth
+  -- ch 1-15 = MIDI out, ch 16 = nb voice (from params)
   midimix.on_channel = function(track_idx, ch)
     local track = seq.tracks[track_idx]
     if not track then return end
     if track.role == "drum" then return end  -- drums stay internal
     if ch == 16 then
-      track.output = "synth"
+      track.output = "nb"
       track.out_channels = {0}
-      print("Track " .. track_idx .. " -> norns synth")
+      print("Track " .. track_idx .. " -> nb voice")
     else
       track.output = "midi"
       track.out_channels = {ch}
@@ -262,9 +258,21 @@ function setup_midimix()
     seq:toggle_mute(track_idx)
   end
 
-  -- Rec buttons: toggle all-channel broadcast
+  -- Rec buttons: toggle nb voice mode
   midimix.on_all_toggle = function(track_idx)
-    seq:set_all_channels(track_idx)
+    local track = seq.tracks[track_idx]
+    if not track then return end
+    if track.role == "drum" then return end
+    if track.output == "nb" then
+      -- Toggle back to MIDI
+      track.output = "midi"
+      seq:reassign_channels()
+      print("Track " .. track_idx .. " -> MIDI ch " .. (track.out_channels[1] or "?"))
+    else
+      -- Switch to nb
+      track.output = "nb"
+      print("Track " .. track_idx .. " -> nb voice")
+    end
     midimix:update_leds(seq.tracks)
   end
 

@@ -207,9 +207,9 @@ function MidiMix:update_leds(tracks)
     else
       self.midi_in:note_on(note, 0, 1)
     end
-    -- Rec arm LED: on = all-channel broadcast active
+    -- Rec arm LED: on = nb voice active
     local rec_note = REC_NOTES[i]
-    if track and track.out_channels and #track.out_channels == 16 then
+    if track and track.output == "nb" then
       self.midi_in:note_on(rec_note, 127, 1)
     else
       self.midi_in:note_on(rec_note, 0, 1)
