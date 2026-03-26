@@ -92,6 +92,12 @@ function MidiMix:handle_event(data)
     self:handle_cc(msg.cc, msg.val)
   elseif msg.type == "note_on" and msg.vel > 0 then
     self:handle_note(msg.note)
+  elseif msg.type == "note_off" or (msg.type == "note_on" and msg.vel == 0) then
+    -- Update LEDs on button release (after hardware is done toggling)
+    if self._pending_led_update then
+      self._pending_led_update = false
+      self:update_leds()
+    end
   end
 end
 
@@ -154,17 +160,19 @@ function MidiMix:handle_cc(cc, val)
 end
 
 function MidiMix:handle_note(note)
-  -- Mute buttons 1-8: track mute toggle
+  -- Mute buttons 1-8: track mute toggle (defer LED update to note_off)
   local mute_idx = self._mute_map[note]
   if mute_idx then
     if self.on_mute_toggle then self.on_mute_toggle(mute_idx) end
+    self._pending_led_update = true
     return
   end
 
-  -- Rec buttons 1-8: toggle all-channel broadcast
+  -- Rec buttons 1-8: toggle all-channel broadcast (defer LED update to note_off)
   local rec_idx = self._rec_map[note]
   if rec_idx then
     if self.on_all_toggle then self.on_all_toggle(rec_idx) end
+    self._pending_led_update = true
     return
   end
 
