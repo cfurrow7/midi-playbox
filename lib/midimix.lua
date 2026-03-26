@@ -1,9 +1,9 @@
 -- midimix.lua: Akai MIDIMIX controller for MIDI JUKEBOX
 --
 -- LAYOUT (channels 1-8 map to tracks 1-8):
---   Knob Row 1 (1-8): MIDI output channel per track
+--   Knob Row 1 (1-7): MIDI output channel per track, (8): delay send/mix
 --   Knob Row 2 (1-7): Program Change per track, (8): drum LPF filter
---   Knob Row 3 (8): drum resonance
+--   Knob Row 3 (1-7): unused, (8): delay time
 --   Mute 1-8: track mute toggle
 --   Rec 1-8: toggle all-channel broadcast
 --   Faders 1-8: track velocity
@@ -51,7 +51,8 @@ function MidiMix.new()
   self.on_prev_song = nil     -- function()
   self.on_next_song = nil     -- function()
   self.on_filter = nil        -- function(freq)
-  self.on_resonance = nil     -- function(res)
+  self.on_delay_mix = nil     -- function(mix 0-1)
+  self.on_delay_time = nil    -- function(time in seconds)
   self.on_panic = nil         -- function()  -- SEND ALL button = panic
   self.on_bpm = nil           -- function(bpm)  -- master fader = BPM
 
@@ -110,11 +111,16 @@ function MidiMix:handle_cc(cc, val)
     return
   end
 
-  -- Knob Row 1 (1-8): MIDI output channel per track
+  -- Knob Row 1 (1-7): MIDI output channel per track, (8): delay send/mix
   local k1 = self._knob1_map[cc]
   if k1 then
-    local ch = cc_to_range(val, 1, 16)
-    if self.on_channel then self.on_channel(k1, ch) end
+    if k1 == 8 then
+      local mix = val / 127
+      if self.on_delay_mix then self.on_delay_mix(mix) end
+    else
+      local ch = cc_to_range(val, 1, 16)
+      if self.on_channel then self.on_channel(k1, ch) end
+    end
     return
   end
 
@@ -133,11 +139,13 @@ function MidiMix:handle_cc(cc, val)
     return
   end
 
-  -- Knob Row 3 (8): drum resonance
+  -- Knob Row 3 (8): delay time
   local k3 = self._knob3_map[cc]
   if k3 and k3 == 8 then
-    local res = 0.1 + (val / 127) * 0.9  -- 0.1 to 1.0
-    if self.on_resonance then self.on_resonance(res) end
+    -- Exponential mapping: 0.01s to 2.0s
+    local time = 0.01 * math.pow(200, val / 127)
+    if val == 0 then time = 0.01 end
+    if self.on_delay_time then self.on_delay_time(time) end
     return
   end
 

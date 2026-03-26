@@ -286,10 +286,16 @@ function setup_midimix()
     engine.lpf(freq)
   end
 
-  -- Knob Row 3 (8): drum resonance
-  midimix.on_resonance = function(res)
-    ui.filter_res = res
-    engine.res(res)
+  -- Knob Row 1 (8): delay send/mix
+  midimix.on_delay_mix = function(mix)
+    engine.delay_mix(mix)
+    params:set("delay_mix", mix)
+  end
+
+  -- Knob Row 3 (8): delay time
+  midimix.on_delay_time = function(time)
+    engine.delay_time(time)
+    params:set("delay_time", time)
   end
 
   -- Mute buttons: toggle track mute by index
