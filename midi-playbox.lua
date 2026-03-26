@@ -43,6 +43,8 @@ function init()
 
   state.kit = 1  -- 808
   state.midi_dir = MIDI_DIR
+  state.lock = false           -- when true, track settings persist across songs
+  state.locked_settings = {}   -- saved per-track settings (by index)
 
   -- Callbacks for UI -> main script communication
   state.on_next = function()
@@ -112,6 +114,15 @@ function init()
   params:set_action("drum_kit", function(val)
     state.kit = val
     engine.kit(val - 1)
+  end)
+
+  params:add_option("track_lock", "Track Lock", {"Off", "On"}, 1)
+  params:set_action("track_lock", function(val)
+    state.lock = (val == 2)
+    if state.lock and #seq.tracks > 0 then
+      save_track_settings()
+    end
+    print("Track Lock: " .. (state.lock and "ON" or "OFF"))
   end)
 
   params:add_separator("CHANNEL ROUTING")
@@ -313,14 +324,68 @@ function setup_midimix()
   end
 end
 
+-- Save current track settings for LOCK (by role, so it adapts to different songs)
+function save_track_settings()
+  state.locked_settings = {}
+  -- Save per-role settings (first track of each role wins)
+  for i, track in ipairs(seq.tracks) do
+    local role = track.role
+    if not state.locked_settings[role] then
+      state.locked_settings[role] = {
+        output = track.output,
+        out_channels = {table.unpack(track.out_channels or {})},
+        velocity_scale = track.velocity_scale,
+        mute = track.mute,
+      }
+    end
+  end
+  -- Also save by index (for MIDIMIX fader positions)
+  for i, track in ipairs(seq.tracks) do
+    state.locked_settings[i] = {
+      velocity_scale = track.velocity_scale,
+      mute = track.mute,
+    }
+  end
+  local roles = {}
+  for k, _ in pairs(state.locked_settings) do
+    if type(k) == "string" then table.insert(roles, k) end
+  end
+  print("LOCK: saved settings for roles: " .. table.concat(roles, ", "))
+end
+
+-- Apply locked settings to current tracks (role-based: bass->bass, chord->chord, etc.)
+function apply_locked_settings()
+  if not state.lock or not next(state.locked_settings) then return end
+  for i, track in ipairs(seq.tracks) do
+    local role_settings = state.locked_settings[track.role]
+    local idx_settings = state.locked_settings[i]
+    if role_settings then
+      track.output = role_settings.output
+      track.out_channels = {table.unpack(role_settings.out_channels)}
+    end
+    if idx_settings then
+      track.velocity_scale = idx_settings.velocity_scale
+      track.mute = idx_settings.mute
+    end
+  end
+  print("LOCK: applied role-based settings to " .. #seq.tracks .. " tracks")
+end
+
 function load_current()
   local song = queue:current()
   if not song then return end
 
+  -- Save settings before loading if locked
+  if state.lock and #seq.tracks > 0 then
+    save_track_settings()
+  end
+
   seq:stop()
   local ok, err = seq:load(song.file)
   if ok then
-    print("Loaded: " .. song.name .. " (" .. seq:get_bpm() .. " BPM, " .. seq:track_count() .. " tracks)")
+    -- Reapply locked settings to the new tracks
+    apply_locked_settings()
+    print("Loaded: " .. song.name .. " (" .. seq:get_bpm() .. " BPM, " .. seq:track_count() .. " tracks)" .. (state.lock and " [LOCKED]" or ""))
     seq:play()
   else
     print("Error loading " .. song.name .. ": " .. (err or "unknown"))
