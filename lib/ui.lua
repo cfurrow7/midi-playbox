@@ -29,6 +29,7 @@ function UI.new(sequencer, queue, state)
 
   -- Drums page state
   self.drum_cursor = 1
+  self.drum_vol = 0.8
   self.filter_freq = 20000
   self.filter_res = 0.3
   self.random_amt = 0.0
@@ -504,12 +505,20 @@ function UI:draw_tracks()
 end
 
 function UI:draw_drums()
+  -- Kit
   screen.level(self.drum_cursor == 1 and 15 or 6)
   screen.move(0, 14)
   screen.text("Kit: " .. KIT_NAMES[self.state.kit or 1])
 
+  -- Volume
   screen.level(self.drum_cursor == 2 and 15 or 6)
   screen.move(0, 24)
+  local vol_pct = math.floor((self.drum_vol or 0.8) * 100)
+  screen.text("Vol:" .. vol_pct .. "%")
+
+  -- LPF
+  screen.level(self.drum_cursor == 3 and 15 or 6)
+  screen.move(50, 24)
   local freq_display
   if self.filter_freq >= 20000 then
     freq_display = "OFF"
@@ -520,12 +529,14 @@ function UI:draw_drums()
   end
   screen.text("LPF:" .. freq_display)
 
-  screen.level(self.drum_cursor == 3 and 15 or 6)
-  screen.move(70, 24)
-  screen.text("Res:" .. string.format("%.1f", self.filter_res))
-
+  -- Res
   screen.level(self.drum_cursor == 4 and 15 or 6)
   screen.move(0, 34)
+  screen.text("Res:" .. string.format("%.1f", self.filter_res))
+
+  -- Random
+  screen.level(self.drum_cursor == 5 and 15 or 6)
+  screen.move(50, 34)
   local rnd_pct = math.floor(self.random_amt * 100)
   screen.text("Rnd:" .. rnd_pct .. "%")
 
@@ -711,12 +722,15 @@ end
 
 function UI:enc_drums(n, d)
   if n == 2 then
-    self.drum_cursor = util.clamp(self.drum_cursor + d, 1, 4)
+    self.drum_cursor = util.clamp(self.drum_cursor + d, 1, 5)
   elseif n == 3 then
     if self.drum_cursor == 1 then
       self.state.kit = util.clamp((self.state.kit or 1) + d, 1, 4)
       engine.kit(self.state.kit - 1)
     elseif self.drum_cursor == 2 then
+      self.drum_vol = util.clamp((self.drum_vol or 0.8) + d * 0.05, 0, 1)
+      engine.amp(self.drum_vol)
+    elseif self.drum_cursor == 3 then
       local freq = self.filter_freq
       if d > 0 then
         freq = math.min(20000, freq * 1.08)
@@ -725,10 +739,10 @@ function UI:enc_drums(n, d)
       end
       self.filter_freq = freq
       engine.lpf(freq)
-    elseif self.drum_cursor == 3 then
+    elseif self.drum_cursor == 4 then
       self.filter_res = util.clamp(self.filter_res + d * 0.05, 0.1, 1.0)
       engine.res(self.filter_res)
-    elseif self.drum_cursor == 4 then
+    elseif self.drum_cursor == 5 then
       self.random_amt = util.clamp(self.random_amt + d * 0.02, 0, 1)
       engine.random_amt(self.random_amt)
     end
