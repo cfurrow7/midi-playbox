@@ -416,10 +416,11 @@ local nb_voice_names = {}
 local function get_nb_voices()
   if #nb_voice_names > 0 then return nb_voice_names end
   -- Read voice names from the first track's nb param options
+  -- Filter out "midi: " entries (we already have ch1-16 for MIDI)
   local p = params:lookup_param("track_1_voice")
   if p and p.options then
     for i, name in ipairs(p.options) do
-      if name ~= "none" then
+      if name ~= "none" and not name:match("^midi: ") then
         table.insert(nb_voice_names, name)
       end
     end
@@ -495,9 +496,7 @@ local function out_pos_label(pos)
     return "ch" .. pos
   elseif pos >= 17 and pos <= 16 + #voices then
     local name = voices[pos - 16]
-    -- Shorten: strip "midi: " prefix, truncate
-    name = name:gsub("^midi: ", "")
-    if #name > 6 then name = name:sub(1, 6) end
+    if #name > 8 then name = name:sub(1, 8) end
     return name
   elseif pos == drm_pos then
     return "DRM"
@@ -539,19 +538,19 @@ function UI:draw_tracks()
     screen.level(muted and 3 or (selected and 12 or 5))
     screen.move(22, y + 6)
     local name = track.name
-    if #name > 8 then name = name:sub(1, 7) .. "." end
+    if #name > 7 then name = name:sub(1, 6) .. "." end
     screen.text(name)
 
     -- Output (unified: ch1-16, nb voices, DRM, OFF)
     track._ui_idx = idx  -- stash index for nb voice lookup
     screen.level(selected and self.track_field == 1 and 15 or 6)
-    screen.move(72, y + 6)
+    screen.move(62, y + 6)
     local pos = track_to_out_pos(track)
     screen.text(out_pos_label(pos))
 
     -- Octave
     screen.level(selected and self.track_field == 2 and 15 or 6)
-    screen.move(104, y + 6)
+    screen.move(110, y + 6)
     if track.output ~= "internal" then
       local oct = track.octave or 0
       screen.text(oct >= 0 and "+" .. oct or tostring(oct))
