@@ -541,7 +541,7 @@ function UI:draw_drums()
   screen.text("Rnd:" .. rnd_pct .. "%")
 
   screen.level(3)
-  screen.move(55, 34)
+  screen.move(0, 63)
   screen.text("K2:dice K3:keep")
 
   for i = 1, 8 do
