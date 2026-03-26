@@ -133,6 +133,28 @@ function init()
     seq:reassign_channels()
   end)
 
+  params:add_separator("MIDI FILTER")
+
+  params:add_option("quantize", "Quantize", {"Off", "1/4", "1/8", "1/16", "1/32"}, 4)
+  params:set_action("quantize", function(val)
+    local divs = {0, 4, 8, 16, 32}
+    seq.quantize_div = divs[val]
+    seq:rebuild_timeline()
+  end)
+
+  params:add_number("min_velocity", "Min Velocity", 0, 60, 15)
+  params:set_action("min_velocity", function(val)
+    seq.min_velocity = val
+    seq:rebuild_timeline()
+  end)
+
+  params:add_option("min_duration", "Min Duration", {"Off", "25ms", "50ms", "100ms"}, 3)
+  params:set_action("min_duration", function(val)
+    local durs = {0, 0.025, 0.05, 0.1}
+    seq.min_duration = durs[val]
+    seq:rebuild_timeline()
+  end)
+
   -- ===== MIDIMIX SETUP =====
   setup_midimix()
 

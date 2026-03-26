@@ -324,4 +324,88 @@ function MidiParser.to_timeline(parsed, bpm_override)
   return all_events, duration
 end
 
+-- Filter and quantize a timeline to reduce CPU load
+-- quantize_div: 0=off, 4=1/4, 8=1/8, 16=1/16, 32=1/32
+-- min_vel: drop note_on events below this velocity (0=off)
+-- min_dur: drop notes shorter than this in seconds (0=off)
+function MidiParser.filter_timeline(events, bpm, quantize_div, min_vel, min_dur)
+  if (not quantize_div or quantize_div == 0) and
+     (not min_vel or min_vel == 0) and
+     (not min_dur or min_dur == 0) then
+    return events  -- nothing to do
+  end
+
+  local beat_sec = 60 / (bpm or 120)
+  local grid = quantize_div and quantize_div > 0 and (beat_sec / (quantize_div / 4)) or 0
+  min_vel = min_vel or 0
+  min_dur = min_dur or 0
+
+  -- First pass: build note_on -> note_off pairs to compute durations
+  -- Key: channel..":"..note -> {time, index}
+  local note_starts = {}
+  local short_notes = {}  -- set of indices to remove
+
+  if min_dur > 0 then
+    for i, ev in ipairs(events) do
+      local key = ev.channel .. ":" .. ev.note
+      if ev.type == "note_on" and ev.velocity > 0 then
+        note_starts[key] = { time = ev.time, idx = i }
+      elseif ev.type == "note_off" or (ev.type == "note_on" and ev.velocity == 0) then
+        local start = note_starts[key]
+        if start then
+          local dur = ev.time - start.time
+          if dur < min_dur then
+            short_notes[start.idx] = true
+            short_notes[i] = true
+          end
+          note_starts[key] = nil
+        end
+      end
+    end
+  end
+
+  -- Second pass: filter and quantize
+  local filtered = {}
+  local before = #events
+  for i, ev in ipairs(events) do
+    local keep = true
+
+    -- Drop short notes
+    if short_notes[i] then keep = false end
+
+    -- Drop quiet notes
+    if keep and ev.type == "note_on" and ev.velocity > 0 and min_vel > 0 then
+      if ev.velocity < min_vel then keep = false end
+    end
+
+    if keep then
+      -- Quantize time to grid
+      if grid > 0 then
+        ev.time = math.floor(ev.time / grid + 0.5) * grid
+      end
+      table.insert(filtered, ev)
+    end
+  end
+
+  -- Re-sort after quantize (times may have shifted)
+  if grid > 0 then
+    table.sort(filtered, function(a, b)
+      if a.time == b.time then
+        if a.type ~= b.type then
+          return a.type == "note_off"
+        end
+        return a.note < b.note
+      end
+      return a.time < b.time
+    end)
+  end
+
+  local after = #filtered
+  if before ~= after then
+    print("MIDI filter: " .. before .. " -> " .. after .. " events (removed " .. (before - after) .. ")")
+  end
+
+  return filtered
+end
+
 return MidiParser

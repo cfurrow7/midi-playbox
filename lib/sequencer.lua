@@ -27,6 +27,11 @@ function Sequencer.new()
   self.original_bpm = 120
   self.bpm_override = nil
 
+  -- MIDI filter settings
+  self.quantize_div = 0    -- 0=off, 8=1/8, 16=1/16, 32=1/32
+  self.min_velocity = 0    -- 0=off, or threshold (e.g. 20)
+  self.min_duration = 0    -- 0=off, or seconds (e.g. 0.05)
+
   -- Callbacks
   self.on_note = nil       -- function(track_idx, note, vel, drum_voice)
   self.on_end = nil
@@ -62,6 +67,11 @@ function Sequencer:rebuild_timeline()
   if not self.parsed then return end
   local bpm = self.bpm_override or self.original_bpm
   self.timeline, self.duration = MidiParser.to_timeline(self.parsed, bpm)
+  -- Apply MIDI filter
+  self.timeline = MidiParser.filter_timeline(
+    self.timeline, bpm,
+    self.quantize_div, self.min_velocity, self.min_duration
+  )
   self.position = 1
   self.elapsed = 0
 end
