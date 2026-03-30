@@ -1,12 +1,10 @@
--- grid_ui.lua: Monome Grid 128 (16x8) controller for MIDI JUKEBOX
+-- grid_ui.lua: Monome Grid 128 (16x8) controller for playbOXY
 --
 -- LAYOUT:
 --   Row 1:     Track mute toggles (1-8) | Transport: play stop restart next
 --   Row 2:     Track activity LEDs (flashes on note)
---   Row 3:     Track output cycle (midi/internal/off)
---   Row 4:     Drum voice triggers (8 pads, manual play)
---   Row 5-8:   Song queue (up to 16 songs per page, 4 rows x 16 cols = grid)
---              Each column = a song slot, press to jump + play
+--   Row 3:     Track output cycle (midi/off)
+--   Row 4-8:   Song queue (up to 80 songs, 5 rows x 16 cols)
 --
 -- LED brightness levels:
 --   0 = off, 4 = dim, 8 = medium, 12 = bright, 15 = max
@@ -14,7 +12,7 @@
 local GridUI = {}
 GridUI.__index = GridUI
 
-local TrackAssign = include("midi-playbox/lib/track_assign")
+local TrackAssign = include("playboxy/lib/track_assign")
 
 function GridUI.new(sequencer, queue, state)
   local self = setmetatable({}, GridUI)
@@ -75,9 +73,7 @@ function GridUI:handle_key(x, y, z)
     self:handle_row_mute(x)
   elseif y == 3 then
     self:handle_row_output(x)
-  elseif y == 4 then
-    self:handle_row_drums(x)
-  elseif y >= 5 and y <= 8 then
+  elseif y >= 4 and y <= 8 then
     self:handle_row_songs(x, y)
   end
 end
@@ -112,18 +108,9 @@ function GridUI:handle_row_output(x)
   end
 end
 
--- Row 4: Manual drum triggers
-function GridUI:handle_row_drums(x)
-  if x <= 8 then
-    local voice = x - 1  -- 0-7
-    engine.trig_kit(voice, 0.8)
-    self.drum_flash[x] = 4
-  end
-end
-
--- Rows 5-8: Song queue grid (press to jump + play)
+-- Rows 4-8: Song queue grid (press to jump + play)
 function GridUI:handle_row_songs(x, y)
-  local row_offset = y - 5  -- 0-3
+  local row_offset = y - 4  -- 0-4
   local song_idx = self.song_page + (row_offset * 16) + x
   if song_idx <= self.queue:count() then
     self.queue.position = song_idx
@@ -143,7 +130,6 @@ function GridUI:refresh()
   self:draw_row_mute()
   self:draw_row_activity()
   self:draw_row_output()
-  self:draw_row_drums()
   self:draw_row_songs()
 
   self.g:refresh()
@@ -206,8 +192,8 @@ function GridUI:draw_row_output()
       local track = self.seq.tracks[x]
       if track.output == "midi" then
         self.g:led(x, 3, 8)   -- medium = MIDI
-      elseif track.output == "internal" then
-        self.g:led(x, 3, 12)  -- bright = internal drums
+      elseif track.output == "nb" then
+        self.g:led(x, 3, 12)  -- bright = nb voice
       else
         self.g:led(x, 3, 1)   -- barely = off
       end
@@ -215,28 +201,20 @@ function GridUI:draw_row_output()
   end
 end
 
--- Row 4: Drum voice pads
-function GridUI:draw_row_drums()
-  for x = 1, 8 do
-    local lit = self.drum_flash[x] > 0
-    self.g:led(x, 4, lit and 15 or 4)
-  end
-end
-
--- Rows 5-8: Song queue grid
+-- Rows 4-8: Song queue grid
 function GridUI:draw_row_songs()
   local count = self.queue:count()
   if count == 0 then return end
 
-  for row = 0, 3 do
+  for row = 0, 4 do
     for col = 1, 16 do
       local song_idx = self.song_page + (row * 16) + col
       if song_idx <= count then
         local is_current = (song_idx == self.queue.position)
         if is_current then
-          self.g:led(col, 5 + row, 15)
+          self.g:led(col, 4 + row, 15)
         else
-          self.g:led(col, 5 + row, 4)
+          self.g:led(col, 4 + row, 4)
         end
       end
     end

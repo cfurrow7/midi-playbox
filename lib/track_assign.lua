@@ -1,6 +1,6 @@
--- track_assign.lua: Auto-assign MIDI file channels to roles
+-- track_assign.lua: Auto-assign MIDI file channels to roles (OP-XY edition)
 -- Dynamic track count - creates a track per active channel
--- Ported from Play My Synths logic
+-- All tracks route to MIDI out (no internal drum engine)
 
 local TrackAssign = {}
 
@@ -66,13 +66,15 @@ end
 -- If only 1 track of a role: gets all channels (layered)
 -- If 2+ tracks: each gets one channel round-robin
 -- These are the defaults; override with TrackAssign.set_channel()
+-- OP-XY channel mapping:
+-- Ch 2 = Bass, Ch 4 = Poly, Ch 10 = Lead, Ch 11 = Poly, Ch 3 = Bass/Lead
 local ROLE_CHANNEL_POOL = {
   bass  = {2},
-  chord = {4},
+  chord = {4, 11},
   lead  = {10},
-  fx    = {4},
+  fx    = {3},
 }
-local DRUM_CH = 15
+local DRUM_CH = 3  -- OP-XY fallback for drum tracks (bass/lead ch)
 
 -- Set primary channel for a role (replaces first entry in pool)
 function TrackAssign.set_channel(role, ch)
@@ -111,7 +113,7 @@ function TrackAssign.build_tracks(ch_data)
       source_ch = ch,
       name = info.name or ("Ch " .. ch),
       role = role or "chord",
-      output = (role == "drum") and "internal" or "midi",
+      output = "midi",  -- OP-XY: all tracks to MIDI out
       out_channels = {},  -- assigned in second pass
       octave = 0,
       velocity_scale = 1.0,

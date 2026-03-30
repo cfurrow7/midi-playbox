@@ -1,16 +1,14 @@
--- ui.lua: Screen drawing and input handling for MIDI JUKEBOX
--- 5 pages: Now Playing, Track Setup, Drums, Queue, Library
--- Dynamic track count - supports however many channels are in the MIDI file
+-- ui.lua: Screen drawing and input handling for playbOXY
+-- 4 pages: Now Playing, Track Setup, Queue, Library
+-- Pure MIDI out for OP-XY - no internal drum engine
 -- Mutes: hold K1 + E2 to select track, K1 + K3 to toggle mute (any page)
 
 local UI = {}
 UI.__index = UI
 
-local TrackAssign = include("midi-playbox/lib/track_assign")
+local TrackAssign = include("playboxy/lib/track_assign")
 
-local PAGES = { "PLAY", "TRACKS", "DRUMS", "QUEUE", "LIBRARY" }
-local KIT_NAMES = { "808", "707", "606", "DrumTraks" }
-local DRUM_VOICE_NAMES = { "KICK", "SNRE", "CHH", "OHH", "CLAP", "LTOM", "HTOM", "CRSH" }
+local PAGES = { "PLAY", "TRACKS", "QUEUE", "LIBRARY" }
 
 function UI.new(sequencer, queue, state)
   local self = setmetatable({}, UI)
@@ -92,7 +90,7 @@ end
 
 -- ===== FAVORITES =====
 
-local FAVORITES_PATH = _path.data .. "midi-playbox/favorites.txt"
+local FAVORITES_PATH = _path.data .. "playboxy/favorites.txt"
 
 function UI:load_favorites()
   self.favorites = {}
@@ -108,7 +106,7 @@ function UI:load_favorites()
 end
 
 function UI:save_favorites()
-  os.execute("mkdir -p " .. _path.data .. "midi-playbox")
+  os.execute("mkdir -p " .. _path.data .. "playboxy")
   local f = io.open(FAVORITES_PATH, "w")
   if not f then return end
   for name, _ in pairs(self.favorites) do
@@ -253,14 +251,14 @@ function UI:draw()
   screen.text(PAGES[self.page])
 
   -- Page indicator dots
-  for i = 1, 5 do
+  for i = 1, 4 do
     screen.level(i == self.page and 15 or 2)
     screen.rect(88 + (i - 1) * 5, 1, 3, 3)
     screen.fill()
   end
 
   -- Mute overlay when K1 held (not on queue/library pages - they use K1 combos)
-  if self.k1_held and self.page ~= 4 and self.page ~= 5 then
+  if self.k1_held and self.page ~= 3 and self.page ~= 4 then
     self:draw_mute_overlay()
     screen.update()
     return
@@ -271,10 +269,8 @@ function UI:draw()
   elseif self.page == 2 then
     self:draw_tracks()
   elseif self.page == 3 then
-    self:draw_drums()
-  elseif self.page == 4 then
     self:draw_queue()
-  elseif self.page == 5 then
+  elseif self.page == 4 then
     self:draw_library()
   end
 
@@ -407,8 +403,8 @@ function UI:draw_play()
   end
 end
 
--- Unified output: ch1-16, [nb voices...], DRM, OFF
--- Positions: 1-16 = MIDI ch, 17..16+N = nb voices, 16+N+1 = DRM, 16+N+2 = OFF
+-- Unified output: ch1-16, [nb voices...], OFF
+-- Positions: 1-16 = MIDI ch, 17..16+N = nb voices, 16+N+1 = OFF
 
 -- Cache nb voice names (built once, refreshed if empty)
 local nb_voice_names = {}
@@ -429,18 +425,15 @@ local function get_nb_voices()
 end
 
 local function total_out_positions()
-  return 16 + #get_nb_voices() + 2  -- midi chs + nb voices + DRM + OFF
+  return 16 + #get_nb_voices() + 1  -- midi chs + nb voices + OFF
 end
 
 local function track_to_out_pos(track)
   local voices = get_nb_voices()
-  local drm_pos = 17 + #voices
-  local off_pos = drm_pos + 1
+  local off_pos = 17 + #voices
 
   if track.output == "off" then return off_pos
-  elseif track.output == "internal" then return drm_pos
   elseif track.output == "nb" then
-    -- Find which nb voice is selected for this track
     local track_idx = track._ui_idx or 1
     local ok, p = pcall(function() return params:lookup_param("track_" .. track_idx .. "_voice") end)
     if ok and p and p.options then
@@ -451,7 +444,7 @@ local function track_to_out_pos(track)
       end
     end
     if #voices > 0 then return 17 end
-    return drm_pos  -- no nb voices available, skip to DRM
+    return off_pos
   else
     return track.out_channels[1] or 1
   end
@@ -459,14 +452,12 @@ end
 
 local function apply_out_pos(track, pos, track_idx)
   local voices = get_nb_voices()
-  local drm_pos = 17 + #voices
-  local off_pos = drm_pos + 1
+  local off_pos = 17 + #voices
 
   if pos >= 1 and pos <= 16 then
     track.output = "midi"
     track.out_channels = {pos}
   elseif pos >= 17 and pos <= 16 + #voices then
-    -- Set to specific nb voice
     track.output = "nb"
     track.out_channels = {0}
     local voice_name = voices[pos - 16]
@@ -481,9 +472,6 @@ local function apply_out_pos(track, pos, track_idx)
         end
       end
     end
-  elseif pos == drm_pos then
-    track.output = "internal"
-    track.out_channels = {0}
   else
     track.output = "off"
     track.out_channels = {0}
@@ -493,8 +481,7 @@ end
 -- Short display label for an output position
 local function out_pos_label(pos)
   local voices = get_nb_voices()
-  local drm_pos = 17 + #voices
-  local off_pos = drm_pos + 1
+  local off_pos = 17 + #voices
 
   if pos >= 1 and pos <= 16 then
     return "ch" .. pos
@@ -502,8 +489,6 @@ local function out_pos_label(pos)
     local name = voices[pos - 16]
     if #name > 8 then name = name:sub(1, 8) end
     return name
-  elseif pos == drm_pos then
-    return "DRM"
   else
     return "OFF"
   end
@@ -555,10 +540,8 @@ function UI:draw_tracks()
     -- Octave
     screen.level(selected and self.track_field == 2 and 15 or 6)
     screen.move(110, y + 6)
-    if track.output ~= "internal" then
-      local oct = track.octave or 0
-      screen.text(oct >= 0 and "+" .. oct or tostring(oct))
-    end
+    local oct = track.octave or 0
+    screen.text(oct >= 0 and "+" .. oct or tostring(oct))
 
     -- Mute indicator
     if muted then
@@ -576,56 +559,7 @@ function UI:draw_tracks()
   end
 end
 
-function UI:draw_drums()
-  -- Kit
-  screen.level(self.drum_cursor == 1 and 15 or 6)
-  screen.move(0, 14)
-  screen.text("Kit: " .. KIT_NAMES[self.state.kit or 1])
-
-  -- Volume
-  screen.level(self.drum_cursor == 2 and 15 or 6)
-  screen.move(0, 24)
-  local vol_pct = math.floor((self.drum_vol or 0.8) * 100)
-  screen.text("Vol:" .. vol_pct .. "%")
-
-  -- LPF
-  screen.level(self.drum_cursor == 3 and 15 or 6)
-  screen.move(50, 24)
-  local freq_display
-  if self.filter_freq >= 20000 then
-    freq_display = "OFF"
-  elseif self.filter_freq >= 1000 then
-    freq_display = string.format("%.1fk", self.filter_freq / 1000)
-  else
-    freq_display = string.format("%dHz", math.floor(self.filter_freq))
-  end
-  screen.text("LPF:" .. freq_display)
-
-  -- Res
-  screen.level(self.drum_cursor == 4 and 15 or 6)
-  screen.move(0, 34)
-  screen.text("Res:" .. string.format("%.1f", self.filter_res))
-
-  -- Random
-  screen.level(self.drum_cursor == 5 and 15 or 6)
-  screen.move(50, 34)
-  local rnd_pct = math.floor(self.random_amt * 100)
-  screen.text("Rnd:" .. rnd_pct .. "%")
-
-  -- Drum voices (2 rows of 4)
-  for i = 1, 8 do
-    local x = ((i - 1) % 4) * 32
-    local y = 40 + math.floor((i - 1) / 4) * 12
-
-    screen.level(self.drum_flash[i] > 0 and 15 or 4)
-    screen.move(x + 2, y + 8)
-    screen.text(DRUM_VOICE_NAMES[i])
-
-    screen.level(self.drum_flash[i] > 0 and 12 or 1)
-    screen.rect(x, y + 10, 28, 2)
-    screen.fill()
-  end
-end
+-- No drums page in playbOXY (OP-XY handles its own sounds)
 
 function UI:draw_queue()
   screen.level(8)
@@ -734,16 +668,14 @@ function UI:enc(n, d)
   end
 
   if n == 1 then
-    self.page = util.clamp(self.page + d, 1, 5)
+    self.page = util.clamp(self.page + d, 1, 4)
   elseif self.page == 1 then
     self:enc_play(n, d)
   elseif self.page == 2 then
     self:enc_tracks(n, d)
   elseif self.page == 3 then
-    self:enc_drums(n, d)
-  elseif self.page == 4 then
     self:enc_queue(n, d)
-  elseif self.page == 5 then
+  elseif self.page == 4 then
     self:enc_library(n, d)
   end
 end
@@ -790,34 +722,7 @@ function UI:enc_tracks(n, d)
   end
 end
 
-function UI:enc_drums(n, d)
-  if n == 2 then
-    self.drum_cursor = util.clamp(self.drum_cursor + d, 1, 5)
-  elseif n == 3 then
-    if self.drum_cursor == 1 then
-      self.state.kit = util.clamp((self.state.kit or 1) + d, 1, 4)
-      engine.kit(self.state.kit - 1)
-    elseif self.drum_cursor == 2 then
-      self.drum_vol = util.clamp((self.drum_vol or 0.8) + d * 0.05, 0, 1)
-      engine.amp(self.drum_vol)
-    elseif self.drum_cursor == 3 then
-      local freq = self.filter_freq
-      if d > 0 then
-        freq = math.min(20000, freq * 1.08)
-      else
-        freq = math.max(60, freq / 1.08)
-      end
-      self.filter_freq = freq
-      engine.lpf(freq)
-    elseif self.drum_cursor == 4 then
-      self.filter_res = util.clamp(self.filter_res + d * 0.05, 0.1, 1.0)
-      engine.res(self.filter_res)
-    elseif self.drum_cursor == 5 then
-      self.random_amt = util.clamp(self.random_amt + d * 0.02, 0, 1)
-      engine.random_amt(self.random_amt)
-    end
-  end
-end
+-- No drums encoder handling in playbOXY
 
 function UI:enc_queue(n, d)
   if n == 2 then
@@ -859,10 +764,10 @@ function UI:key(n, z)
 
   -- K1 combos: queue and library handle their own, others get mute toggle
   if self.k1_held then
-    if self.page == 4 then
+    if self.page == 3 then
       self:key_queue(n)
       return
-    elseif self.page == 5 then
+    elseif self.page == 4 then
       self:key_library(n)
       return
     else
@@ -878,10 +783,8 @@ function UI:key(n, z)
   elseif self.page == 2 then
     self:key_tracks(n)
   elseif self.page == 3 then
-    self:key_drums(n)
-  elseif self.page == 4 then
     self:key_queue(n)
-  elseif self.page == 5 then
+  elseif self.page == 4 then
     self:key_library(n)
   end
 end
@@ -908,13 +811,7 @@ function UI:key_tracks(n)
   end
 end
 
-function UI:key_drums(n)
-  if n == 2 then
-    engine.randomize()
-  elseif n == 3 then
-    engine.random_keep()
-  end
-end
+-- No drums key handling in playbOXY
 
 function UI:key_queue(n)
   if n == 2 then
@@ -925,7 +822,7 @@ function UI:key_queue(n)
     if self.k1_held then
       -- K1+K3: save queue as playlist
       if self.queue:count() > 0 then
-        local playlist_dir = _path.code .. "midi-playbox/playlists"
+        local playlist_dir = _path.code .. "playboxy/playlists"
         os.execute("mkdir -p " .. playlist_dir)
         local filepath = playlist_dir .. "/saved.txt"
         if self.queue:save_playlist(filepath) then

@@ -1,24 +1,23 @@
--- MIDI JUKEBOX
--- Dynamic track MIDI song player with built-in drum machine
--- Auto-assigns MIDI channels to roles (bass/chord/lead/drum/fx)
--- Drum tracks -> sample-based drums (808/909/606/LinnDrum/DMX) with LPF + delay
--- Synth tracks -> MIDI out, or nb voice (Doubledecker, MollyThePoly, etc.)
+-- playbOXY
+-- MIDI jukebox for OP-XY
+-- Auto-assigns MIDI channels to roles (bass/chord/lead/fx)
+-- Pure MIDI out - OP-XY handles all sound generation
 -- AKAI MIDIMIX support for hands-on control
+--
+-- OP-XY Channel Map:
+--   Ch 2 = Bass | Ch 4,11 = Poly | Ch 10 = Lead | Ch 3 = Bass/Lead
 --
 -- E1: page select | E2/E3: context-sensitive
 -- K2: play/stop (page 1) | K3: restart (page 1)
 --
--- v1.3 @clf
-
-engine.name = "DrumBox"
+-- v1.0 @clf
 
 local nb = require("nb/lib/nb")
-local Sequencer = include("midi-playbox/lib/sequencer")
-local Queue = include("midi-playbox/lib/queue")
-local UILib = include("midi-playbox/lib/ui")
-local MidiMix = include("midi-playbox/lib/midimix")
-local TrackAssign = include("midi-playbox/lib/track_assign")
-local DrumKits = include("midi-playbox/lib/drum_kits")
+local Sequencer = include("playboxy/lib/sequencer")
+local Queue = include("playboxy/lib/queue")
+local UILib = include("playboxy/lib/ui")
+local MidiMix = include("playboxy/lib/midimix")
+local TrackAssign = include("playboxy/lib/track_assign")
 
 local seq = Sequencer.new()
 local queue = Queue.new()
@@ -29,9 +28,9 @@ local state = {}
 -- Max tracks with nb voice selectors
 local MAX_NB_TRACKS = 8
 
--- Shared MIDI folder accessible by all Norns scripts
+-- Shared MIDI folder (same as midi-playbox)
 local MIDI_DIR = _path.data .. "midi"
-local PLAYLIST_DIR = _path.code .. "midi-playbox/playlists"
+local PLAYLIST_DIR = _path.code .. "playboxy/playlists"
 
 local redraw_clock = nil
 
@@ -42,10 +41,9 @@ function init()
   -- Init nb voice system
   nb:init()
 
-  state.kit = 1  -- 808
   state.midi_dir = MIDI_DIR
-  state.lock = false           -- when true, track settings persist across songs
-  state.locked_settings = {}   -- saved per-track settings (by index)
+  state.lock = false
+  state.locked_settings = {}
 
   -- Callbacks for UI -> main script communication
   state.on_next = function()
@@ -57,7 +55,6 @@ function init()
   end
 
   state.on_play_file = function(entry)
-    -- Clear queue, add just this file, play
     queue:clear()
     queue:add(entry.display, entry.file)
     queue.position = 1
@@ -68,26 +65,12 @@ function init()
   ui = UILib.new(seq, queue, state)
   ui:refresh_library(MIDI_DIR)
 
-  -- MIDI out connection (for synths)
+  -- MIDI out connection (for OP-XY)
   seq:connect_midi(1)
 
-  -- Load default drum kit samples
-  DrumKits.load(1)  -- TR-808
-
-  -- Send PC 0 (init patch) to all MIDI channels on startup
-  if seq.midi_out then
-    for ch = 1, 16 do
-      seq.midi_out:program_change(0, ch)
-    end
-    print("Sent PC 0 to all MIDI channels")
-  end
-
   -- Sequencer callbacks
-  seq.on_note = function(track_idx, note, vel, drum_voice)
+  seq.on_note = function(track_idx, note, vel)
     ui:note_flash(track_idx)
-    if drum_voice then
-      ui:drum_voice_flash(drum_voice)
-    end
   end
 
   seq.on_end = function()
@@ -99,7 +82,7 @@ function init()
   end
 
   -- ===== PARAMS =====
-  params:add_separator("MIDI JUKEBOX")
+  params:add_separator("playbOXY")
 
   params:add_number("midi_out_device", "MIDI Out Device", 1, 16, 1)
   params:set_action("midi_out_device", function(val)
@@ -111,39 +94,6 @@ function init()
     midimix:connect(val)
   end)
 
-  params:add_option("drum_kit", "Drum Kit", DrumKits.names(), 1)
-  params:set_action("drum_kit", function(val)
-    state.kit = val
-    DrumKits.load(val)
-  end)
-
-  params:add_separator("DRUM FX")
-
-  params:add_control("drum_lpf", "Drum LPF", controlspec.new(20, 20000, "exp", 0, 20000, "Hz"))
-  params:set_action("drum_lpf", function(val)
-    engine.lpf(val)
-  end)
-
-  params:add_control("drum_res", "Drum Resonance", controlspec.new(0.05, 1.0, "lin", 0, 0.3))
-  params:set_action("drum_res", function(val)
-    engine.res(val)
-  end)
-
-  params:add_control("delay_time", "Delay Time", controlspec.new(0.01, 2.0, "exp", 0, 0.3, "s"))
-  params:set_action("delay_time", function(val)
-    engine.delay_time(val)
-  end)
-
-  params:add_control("delay_feedback", "Delay Feedback", controlspec.new(0, 0.95, "lin", 0, 0.3))
-  params:set_action("delay_feedback", function(val)
-    engine.delay_feedback(val)
-  end)
-
-  params:add_control("delay_mix", "Delay Mix", controlspec.new(0, 1, "lin", 0, 0.0))
-  params:set_action("delay_mix", function(val)
-    engine.delay_mix(val)
-  end)
-
   params:add_option("track_lock", "Track Lock", {"Off", "On"}, 1)
   params:set_action("track_lock", function(val)
     state.lock = (val == 2)
@@ -153,7 +103,7 @@ function init()
     print("Track Lock: " .. (state.lock and "ON" or "OFF"))
   end)
 
-  params:add_separator("CHANNEL ROUTING")
+  params:add_separator("OP-XY CHANNEL ROUTING")
 
   params:add_number("bass_ch", "Bass Ch", 1, 16, 2)
   params:set_action("bass_ch", function(val)
@@ -161,19 +111,25 @@ function init()
     seq:reassign_channels()
   end)
 
-  params:add_number("chord_ch", "Chord Ch", 1, 16, 4)
+  params:add_number("chord_ch", "Chord/Poly Ch", 1, 16, 4)
   params:set_action("chord_ch", function(val)
     TrackAssign.set_channel("chord", val)
     seq:reassign_channels()
   end)
 
-  params:add_number("lead_ch", "Lead Ch", 1, 16, 3)
+  params:add_number("lead_ch", "Lead Ch", 1, 16, 10)
   params:set_action("lead_ch", function(val)
     TrackAssign.set_channel("lead", val)
     seq:reassign_channels()
   end)
 
-  params:add_number("drum_ch", "Drum Ch", 1, 16, 15)
+  params:add_number("fx_ch", "FX/Bass-Lead Ch", 1, 16, 3)
+  params:set_action("fx_ch", function(val)
+    TrackAssign.set_channel("fx", val)
+    seq:reassign_channels()
+  end)
+
+  params:add_number("drum_ch", "Drum Ch", 1, 16, 3)
   params:set_action("drum_ch", function(val)
     TrackAssign.set_channel("drum", val)
     seq:reassign_channels()
@@ -225,7 +181,8 @@ function init()
     end
   end)
 
-  print("MIDI JUKEBOX v1.3 loaded (sample drums + nb voices)")
+  print("playbOXY v1.0 loaded (OP-XY MIDI jukebox)")
+  print("OP-XY channels: Bass=2, Poly=4/11, Lead=10, Bass-Lead=3")
   print("MIDI dir: " .. MIDI_DIR)
   print("Files found: " .. #ui.lib_files)
 end
@@ -239,7 +196,6 @@ function get_nb_player(track_idx)
 end
 
 function setup_midimix()
-  -- Connect MIDIMIX (default device 2, configurable via params)
   midimix:connect(2)
 
   -- Faders 1-8: velocity scaling per track
@@ -247,18 +203,13 @@ function setup_midimix()
     local track = seq.tracks[track_idx]
     if not track then return end
     track.velocity_scale = vel
-    if track.output == "internal" then
-      engine.amp(vel)
-    end
     midimix:update_leds(seq.tracks)
   end
 
-  -- Knob Row 1 (1-8): MIDI output channel per track
-  -- ch 1-15 = MIDI out, ch 16 = nb voice (from params)
+  -- Knob Row 1 (1-7): MIDI output channel per track
   midimix.on_channel = function(track_idx, ch)
     local track = seq.tracks[track_idx]
     if not track then return end
-    if track.role == "drum" then return end  -- drums stay internal
     if ch == 16 then
       track.output = "nb"
       track.out_channels = {0}
@@ -280,23 +231,14 @@ function setup_midimix()
     end
   end
 
-  -- Knob Row 2 (8): drum LPF filter
-  midimix.on_filter = function(freq)
-    ui.filter_freq = freq
-    engine.lpf(freq)
-  end
+  -- Knob Row 2 (8): unused (no drum filter)
+  midimix.on_filter = function(freq) end
 
-  -- Knob Row 1 (8): delay send/mix
-  midimix.on_delay_mix = function(mix)
-    engine.delay_mix(mix)
-    params:set("delay_mix", mix)
-  end
+  -- Knob Row 1 (8): unused (no delay)
+  midimix.on_delay_mix = function(mix) end
 
-  -- Knob Row 3 (8): delay time
-  midimix.on_delay_time = function(time)
-    engine.delay_time(time)
-    params:set("delay_time", time)
-  end
+  -- Knob Row 3 (8): unused (no delay)
+  midimix.on_delay_time = function(time) end
 
   -- Mute buttons: toggle track mute by index
   midimix.on_mute_toggle = function(track_idx)
@@ -307,14 +249,11 @@ function setup_midimix()
   midimix.on_all_toggle = function(track_idx)
     local track = seq.tracks[track_idx]
     if not track then return end
-    if track.role == "drum" then return end
     if track.output == "nb" then
-      -- Toggle back to MIDI
       track.output = "midi"
       seq:reassign_channels()
       print("Track " .. track_idx .. " -> MIDI ch " .. (track.out_channels[1] or "?"))
     else
-      -- Switch to nb
       track.output = "nb"
       print("Track " .. track_idx .. " -> nb voice")
     end
@@ -333,7 +272,7 @@ function setup_midimix()
     advance_queue()
   end
 
-  -- Master fader = BPM (debounced to avoid stop/rebuild spam)
+  -- Master fader = BPM (debounced)
   local bpm_pending = nil
   local bpm_clock = nil
   midimix.on_bpm = function(bpm)
@@ -350,7 +289,7 @@ function setup_midimix()
     end)
   end
 
-  -- SEND ALL button (above master fader) = PANIC
+  -- SEND ALL = PANIC
   midimix.on_panic = function()
     print("PANIC! All notes off")
     seq:stop()
@@ -358,10 +297,8 @@ function setup_midimix()
   end
 end
 
--- Save current track settings for LOCK (by role, so it adapts to different songs)
 function save_track_settings()
   state.locked_settings = {}
-  -- Save per-role settings (first track of each role wins)
   for i, track in ipairs(seq.tracks) do
     local role = track.role
     if not state.locked_settings[role] then
@@ -373,7 +310,6 @@ function save_track_settings()
       }
     end
   end
-  -- Also save by index (for MIDIMIX fader positions)
   for i, track in ipairs(seq.tracks) do
     state.locked_settings[i] = {
       velocity_scale = track.velocity_scale,
@@ -387,7 +323,6 @@ function save_track_settings()
   print("LOCK: saved settings for roles: " .. table.concat(roles, ", "))
 end
 
--- Apply locked settings to current tracks (role-based: bass->bass, chord->chord, etc.)
 function apply_locked_settings()
   if not state.lock or not next(state.locked_settings) then return end
   for i, track in ipairs(seq.tracks) do
@@ -409,7 +344,6 @@ function load_current()
   local song = queue:current()
   if not song then return end
 
-  -- Save settings before loading if locked
   if state.lock and #seq.tracks > 0 then
     save_track_settings()
   end
@@ -417,7 +351,6 @@ function load_current()
   seq:stop()
   local ok, err = seq:load(song.file)
   if ok then
-    -- Reapply locked settings to the new tracks
     apply_locked_settings()
     print("Loaded: " .. song.name .. " (" .. seq:get_bpm() .. " BPM, " .. seq:track_count() .. " tracks)" .. (state.lock and " [LOCKED]" or ""))
     seq:play()

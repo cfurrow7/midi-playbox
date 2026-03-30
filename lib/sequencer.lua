@@ -1,8 +1,8 @@
--- sequencer.lua: MIDI playback engine with clock-based timing
--- Dynamic track count - routes each track to MIDI out or internal drum engine
+-- sequencer.lua: MIDI playback engine with clock-based timing (OP-XY edition)
+-- All tracks route to MIDI out - no internal drum engine
 
-local MidiParser = include("midi-playbox/lib/midi_parser")
-local TrackAssign = include("midi-playbox/lib/track_assign")
+local MidiParser = include("playboxy/lib/midi_parser")
+local TrackAssign = include("playboxy/lib/track_assign")
 
 local Sequencer = {}
 Sequencer.__index = Sequencer
@@ -171,19 +171,7 @@ function Sequencer:route_event(event)
   -- Check output mode
   if track.output == "off" then return end
 
-  if track.output == "internal" then
-    -- Route to internal drum engine
-    if event.type == "note_on" and event.velocity > 0 then
-      local voice = TrackAssign.map_drum_note(event.note)
-      if voice then
-        local vel = (event.velocity / 127) * (track.velocity_scale or 1.0)
-        engine.trig_kit(voice, vel)
-        if self.on_note then
-          self.on_note(track_idx, event.note, event.velocity, voice)
-        end
-      end
-    end
-  elseif track.output == "nb" then
+  if track.output == "nb" then
     -- Route to nb voice (Doubledecker, MollyThePoly, PolyPerc, etc.)
     local note = event.note + (track.octave or 0) * 12
     note = math.max(0, math.min(127, note))
@@ -276,13 +264,11 @@ function Sequencer:toggle_mute(track_idx)
   end
 end
 
--- Cycle output mode for a track: midi -> internal -> off -> midi
+-- Cycle output mode for a track: midi -> off -> midi
 function Sequencer:cycle_output(track_idx)
   local track = self.tracks[track_idx]
   if not track then return end
   if track.output == "midi" then
-    track.output = "internal"
-  elseif track.output == "internal" then
     track.output = "off"
   else
     track.output = "midi"
