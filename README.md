@@ -1,11 +1,11 @@
 # playOPXY
 
-MIDI jukebox for OP-XY on monome norns. Forked from midi-playbox -- pure MIDI out, no internal drum engine. Auto-assigns MIDI tracks to roles and routes them to OP-XY channels.
+MIDI jukebox for OP-XY on monome norns. Forked from midi-playbox. Pure MIDI out, no internal drum engine. Auto-assigns MIDI tracks to roles and routes them to OP-XY channels matching the default project layout.
 
 ## Requirements
 
 - monome norns
-- OP-XY connected via MIDI
+- OP-XY connected via USB (USB-A from norns to USB-C on OP-XY)
 - Optional: Akai MIDIMIX controller
 - MIDI files in the shared `data/midi/` folder (same library as midi-playbox)
 
@@ -13,19 +13,25 @@ MIDI jukebox for OP-XY on monome norns. Forked from midi-playbox -- pure MIDI ou
 
 Place in `~/dust/code/playopxy/`. Uses the same shared MIDI folder as midi-playbox (`~/dust/data/midi/`).
 
+## Connection
+
+Connect a USB-A to USB-C cable from norns to the OP-XY. The OP-XY shows up as a class-compliant USB MIDI device. Set the correct device number in PARAMS > MIDI Out Device.
+
 ## OP-XY Channel Routing
 
-Tracks are auto-detected by role (from track name or note range) and routed to OP-XY channels:
+Matches the OP-XY default project layout (track number = MIDI channel):
 
-| Role | Channel(s) | OP-XY Track |
-|------|-----------|-------------|
-| Bass | 2 | Bass |
-| Chord | 4, 11 | Poly, Poly |
-| Lead | 10 | Lead |
-| FX | 3 | Bass/Lead |
-| Drum | 3 | Bass/Lead (fallback) |
+| Role | Channel(s) | OP-XY Default Track |
+|------|-----------|---------------------|
+| Drum | 1 (2) | Drums |
+| Bass | 3 | Bass |
+| FX | 4, 6 | Pluck, Soft pluck |
+| Lead | 5 | Lead |
+| Chord | 7, 8 | Strings, Pad |
 
-When multiple tracks share a role, they split across channels round-robin.
+When multiple tracks share a role, they split across channels round-robin:
+- 1 chord track: layered to ch 7 + 8
+- 2 chord tracks: first -> ch 7, second -> ch 8
 
 All channels are configurable via norns PARAMS menu.
 
@@ -79,6 +85,10 @@ Browse all MIDI files with favorites.
  BANK L/R:    prev/next song in queue
  SEND ALL:    PANIC (stop + all notes off)
 ```
+
+## Muting
+
+Hold **K1** on pages 1-2 to show the mute overlay. Use **E2** to select a track and **K3** to toggle mute.
 
 ## Credits
 
