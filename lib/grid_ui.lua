@@ -1,4 +1,4 @@
--- grid_ui.lua: Monome Grid 128 (16x8) controller for playbOXY
+-- grid_ui.lua: Monome Grid 128 (16x8) controller for playOPXY
 --
 -- LAYOUT:
 --   Row 1:     Track mute toggles (1-8) | Transport: play stop restart next
@@ -12,7 +12,7 @@
 local GridUI = {}
 GridUI.__index = GridUI
 
-local TrackAssign = include("playboxy/lib/track_assign")
+local TrackAssign = include("playopxy/lib/track_assign")
 
 function GridUI.new(sequencer, queue, state)
   local self = setmetatable({}, GridUI)

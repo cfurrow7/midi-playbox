@@ -1,4 +1,4 @@
--- ui.lua: Screen drawing and input handling for playbOXY
+-- ui.lua: Screen drawing and input handling for playOPXY
 -- 4 pages: Now Playing, Track Setup, Queue, Library
 -- Pure MIDI out for OP-XY - no internal drum engine
 -- Mutes: hold K1 + E2 to select track, K1 + K3 to toggle mute (any page)
@@ -6,7 +6,7 @@
 local UI = {}
 UI.__index = UI
 
-local TrackAssign = include("playboxy/lib/track_assign")
+local TrackAssign = include("playopxy/lib/track_assign")
 
 local PAGES = { "PLAY", "TRACKS", "QUEUE", "LIBRARY" }
 
@@ -90,7 +90,7 @@ end
 
 -- ===== FAVORITES =====
 
-local FAVORITES_PATH = _path.data .. "playboxy/favorites.txt"
+local FAVORITES_PATH = _path.data .. "playopxy/favorites.txt"
 
 function UI:load_favorites()
   self.favorites = {}
@@ -106,7 +106,7 @@ function UI:load_favorites()
 end
 
 function UI:save_favorites()
-  os.execute("mkdir -p " .. _path.data .. "playboxy")
+  os.execute("mkdir -p " .. _path.data .. "playopxy")
   local f = io.open(FAVORITES_PATH, "w")
   if not f then return end
   for name, _ in pairs(self.favorites) do
@@ -559,7 +559,7 @@ function UI:draw_tracks()
   end
 end
 
--- No drums page in playbOXY (OP-XY handles its own sounds)
+-- No drums page in playOPXY (OP-XY handles its own sounds)
 
 function UI:draw_queue()
   screen.level(8)
@@ -722,7 +722,7 @@ function UI:enc_tracks(n, d)
   end
 end
 
--- No drums encoder handling in playbOXY
+-- No drums encoder handling in playOPXY
 
 function UI:enc_queue(n, d)
   if n == 2 then
@@ -811,7 +811,7 @@ function UI:key_tracks(n)
   end
 end
 
--- No drums key handling in playbOXY
+-- No drums key handling in playOPXY
 
 function UI:key_queue(n)
   if n == 2 then
@@ -822,7 +822,7 @@ function UI:key_queue(n)
     if self.k1_held then
       -- K1+K3: save queue as playlist
       if self.queue:count() > 0 then
-        local playlist_dir = _path.code .. "playboxy/playlists"
+        local playlist_dir = _path.code .. "playopxy/playlists"
         os.execute("mkdir -p " .. playlist_dir)
         local filepath = playlist_dir .. "/saved.txt"
         if self.queue:save_playlist(filepath) then

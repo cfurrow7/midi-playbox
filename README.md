@@ -1,4 +1,4 @@
-# playbOXY
+# playOPXY
 
 MIDI jukebox for OP-XY on monome norns. Forked from midi-playbox -- pure MIDI out, no internal drum engine. Auto-assigns MIDI tracks to roles and routes them to OP-XY channels.
 
@@ -11,7 +11,7 @@ MIDI jukebox for OP-XY on monome norns. Forked from midi-playbox -- pure MIDI ou
 
 ## Install
 
-Place in `~/dust/code/playboxy/`. Uses the same shared MIDI folder as midi-playbox (`~/dust/data/midi/`).
+Place in `~/dust/code/playopxy/`. Uses the same shared MIDI folder as midi-playbox (`~/dust/data/midi/`).
 
 ## OP-XY Channel Routing
 

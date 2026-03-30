@@ -1,8 +1,8 @@
 -- sequencer.lua: MIDI playback engine with clock-based timing (OP-XY edition)
 -- All tracks route to MIDI out - no internal drum engine
 
-local MidiParser = include("playboxy/lib/midi_parser")
-local TrackAssign = include("playboxy/lib/track_assign")
+local MidiParser = include("playopxy/lib/midi_parser")
+local TrackAssign = include("playopxy/lib/track_assign")
 
 local Sequencer = {}
 Sequencer.__index = Sequencer

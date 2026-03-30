@@ -1,4 +1,4 @@
--- playbOXY
+-- playOPXY
 -- MIDI jukebox for OP-XY
 -- Auto-assigns MIDI channels to roles (bass/chord/lead/fx)
 -- Pure MIDI out - OP-XY handles all sound generation
@@ -13,11 +13,11 @@
 -- v1.0 @clf
 
 local nb = require("nb/lib/nb")
-local Sequencer = include("playboxy/lib/sequencer")
-local Queue = include("playboxy/lib/queue")
-local UILib = include("playboxy/lib/ui")
-local MidiMix = include("playboxy/lib/midimix")
-local TrackAssign = include("playboxy/lib/track_assign")
+local Sequencer = include("playopxy/lib/sequencer")
+local Queue = include("playopxy/lib/queue")
+local UILib = include("playopxy/lib/ui")
+local MidiMix = include("playopxy/lib/midimix")
+local TrackAssign = include("playopxy/lib/track_assign")
 
 local seq = Sequencer.new()
 local queue = Queue.new()
@@ -30,7 +30,7 @@ local MAX_NB_TRACKS = 8
 
 -- Shared MIDI folder (same as midi-playbox)
 local MIDI_DIR = _path.data .. "midi"
-local PLAYLIST_DIR = _path.code .. "playboxy/playlists"
+local PLAYLIST_DIR = _path.code .. "playopxy/playlists"
 
 local redraw_clock = nil
 
@@ -82,7 +82,7 @@ function init()
   end
 
   -- ===== PARAMS =====
-  params:add_separator("playbOXY")
+  params:add_separator("playOPXY")
 
   params:add_number("midi_out_device", "MIDI Out Device", 1, 16, 1)
   params:set_action("midi_out_device", function(val)
@@ -181,7 +181,7 @@ function init()
     end
   end)
 
-  print("playbOXY v1.0 loaded (OP-XY MIDI jukebox)")
+  print("playOPXY v1.0 loaded (OP-XY MIDI jukebox)")
   print("OP-XY channels: Bass=2, Poly=4/11, Lead=10, Bass-Lead=3")
   print("MIDI dir: " .. MIDI_DIR)
   print("Files found: " .. #ui.lib_files)
