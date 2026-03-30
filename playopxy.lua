@@ -105,25 +105,25 @@ function init()
 
   params:add_separator("OP-XY CHANNEL ROUTING")
 
-  params:add_number("bass_ch", "Bass Ch", 1, 16, 2)
+  params:add_number("bass_ch", "Bass Ch", 1, 16, 3)
   params:set_action("bass_ch", function(val)
     TrackAssign.set_channel("bass", val)
     seq:reassign_channels()
   end)
 
-  params:add_number("chord_ch", "Chord/Poly Ch", 1, 16, 4)
+  params:add_number("chord_ch", "Chord Ch (Strings/Pad)", 1, 16, 7)
   params:set_action("chord_ch", function(val)
     TrackAssign.set_channel("chord", val)
     seq:reassign_channels()
   end)
 
-  params:add_number("lead_ch", "Lead Ch", 1, 16, 10)
+  params:add_number("lead_ch", "Lead Ch", 1, 16, 5)
   params:set_action("lead_ch", function(val)
     TrackAssign.set_channel("lead", val)
     seq:reassign_channels()
   end)
 
-  params:add_number("fx_ch", "FX/Bass-Lead Ch", 1, 16, 3)
+  params:add_number("fx_ch", "FX Ch (Pluck)", 1, 16, 4)
   params:set_action("fx_ch", function(val)
     TrackAssign.set_channel("fx", val)
     seq:reassign_channels()
@@ -182,7 +182,7 @@ function init()
   end)
 
   print("playOPXY v1.0 loaded (OP-XY MIDI jukebox)")
-  print("OP-XY channels: Drum=1, Bass=2, Bass-Lead=3, Poly=4/11, Lead=10")
+  print("OP-XY channels: Drum=1/2, Bass=3, Pluck=4/6, Lead=5, Strings=7, Pad=8")
   print("MIDI dir: " .. MIDI_DIR)
   print("Files found: " .. #ui.lib_files)
 end

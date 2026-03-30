@@ -66,13 +66,14 @@ end
 -- If only 1 track of a role: gets all channels (layered)
 -- If 2+ tracks: each gets one channel round-robin
 -- These are the defaults; override with TrackAssign.set_channel()
--- OP-XY channel mapping:
--- Ch 1,2 = Drums, Ch 2 = Bass, Ch 4 = Poly, Ch 10 = Lead, Ch 11 = Poly, Ch 3 = Bass/Lead
+-- OP-XY default project: track = channel (1:1)
+-- Ch 1,2 = Drums, Ch 3 = Bass, Ch 4 = Pluck, Ch 5 = Lead
+-- Ch 6 = Soft pluck, Ch 7 = Strings, Ch 8 = Pad
 local ROLE_CHANNEL_POOL = {
-  bass  = {2},
-  chord = {4, 11},
-  lead  = {10},
-  fx    = {3},
+  bass  = {3},
+  chord = {7, 8},
+  lead  = {5},
+  fx    = {4, 6},
 }
 local DRUM_CH = 1  -- OP-XY drums on ch 1 (ch 2 also available)
 
