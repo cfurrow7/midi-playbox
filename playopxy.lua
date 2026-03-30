@@ -129,7 +129,7 @@ function init()
     seq:reassign_channels()
   end)
 
-  params:add_number("drum_ch", "Drum Ch", 1, 16, 3)
+  params:add_number("drum_ch", "Drum Ch", 1, 16, 1)
   params:set_action("drum_ch", function(val)
     TrackAssign.set_channel("drum", val)
     seq:reassign_channels()
@@ -182,7 +182,7 @@ function init()
   end)
 
   print("playOPXY v1.0 loaded (OP-XY MIDI jukebox)")
-  print("OP-XY channels: Bass=2, Poly=4/11, Lead=10, Bass-Lead=3")
+  print("OP-XY channels: Drum=1, Bass=2, Bass-Lead=3, Poly=4/11, Lead=10")
   print("MIDI dir: " .. MIDI_DIR)
   print("Files found: " .. #ui.lib_files)
 end
