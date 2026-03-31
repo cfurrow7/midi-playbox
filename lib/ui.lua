@@ -900,13 +900,17 @@ function UI:draw_tracker()
   local tw = 128 - lm
   local total = window + lookback
 
-  -- Channel to row lookup
-  local ch_row = {}
-  for i, track in ipairs(self.seq.tracks) do
-    if i <= tc then
-      ch_row[track.source_ch] = i
+  -- Channel to row lookup (cached, rebuilt when track count changes)
+  if not self._tracker_ch_row or self._tracker_tc ~= tc then
+    self._tracker_ch_row = {}
+    for i, track in ipairs(self.seq.tracks) do
+      if i <= tc then
+        self._tracker_ch_row[track.source_ch] = i
+      end
     end
+    self._tracker_tc = tc
   end
+  local ch_row = self._tracker_ch_row
 
   -- Row labels + dividers
   for i = 1, tc do
@@ -936,13 +940,23 @@ function UI:draw_tracker()
   screen.line(ph_x, bottom)
   screen.stroke()
 
-  -- Draw note bars
+  -- Draw note bars (binary search to visible window only)
   local t_start = now - lookback
   local t_end = now + window
+  local n_bars = #bars
 
-  for _, bar in ipairs(bars) do
+  -- Binary search: find first bar that could be visible (t1 >= t_start - 30s margin for long notes)
+  local lo, hi = 1, n_bars
+  local search_start = t_start - 30
+  while lo < hi do
+    local mid = math.floor((lo + hi) / 2)
+    if bars[mid].t1 < search_start then lo = mid + 1 else hi = mid end
+  end
+
+  for idx = lo, n_bars do
+    local bar = bars[idx]
+    if bar.t1 > t_end then break end  -- past visible window, done
     if bar.t2 < t_start then goto continue end
-    if bar.t1 > t_end then goto continue end
 
     local row = ch_row[bar.ch]
     if not row then goto continue end
