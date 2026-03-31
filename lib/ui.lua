@@ -359,7 +359,7 @@ function UI:draw_play()
   -- Progress bar
   local progress = 0
   if self.seq.duration > 0 then
-    progress = self.seq.elapsed / self.seq.duration
+    progress = self.seq:get_elapsed() / self.seq.duration
   end
   screen.level(2)
   screen.rect(0, 33, 128, 4)
@@ -371,7 +371,7 @@ function UI:draw_play()
   -- Time + queue position
   screen.level(6)
   screen.move(0, 45)
-  screen.text(format_time(self.seq.elapsed) .. " / " .. format_time(self.seq.duration))
+  screen.text(format_time(self.seq:get_elapsed()) .. " / " .. format_time(self.seq.duration))
 
   if self.queue:count() > 0 then
     screen.level(4)
@@ -887,7 +887,7 @@ function UI:draw_tracker()
     return
   end
 
-  local now = self.seq.elapsed
+  local now = self.seq:get_elapsed()
   local window = 6    -- seconds ahead
   local lookback = 1  -- seconds behind
 

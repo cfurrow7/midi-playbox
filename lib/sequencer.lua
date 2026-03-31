@@ -20,6 +20,10 @@ function Sequencer.new()
   self.position = 1
   self.elapsed = 0
 
+  -- Wall-clock references for continuous elapsed tracking
+  self._play_start_time = nil
+  self._play_start_elapsed = nil
+
   -- Dynamic track list (built from MIDI file)
   self.tracks = {}  -- array of track objects
 
@@ -101,6 +105,14 @@ function Sequencer:build_note_bars()
   end
 end
 
+-- Continuous elapsed time (for UI) - reads wall clock, not just note events
+function Sequencer:get_elapsed()
+  if self.playing and self._play_start_time then
+    return self._play_start_elapsed + (util.time() - self._play_start_time)
+  end
+  return self.elapsed
+end
+
 function Sequencer:get_bpm()
   return self.bpm_override or self.original_bpm
 end
@@ -144,10 +156,12 @@ function Sequencer:play()
   if self.playing then return end
 
   self.playing = true
+  self._play_start_time = util.time()
+  self._play_start_elapsed = self.elapsed
 
   self.clock_id = clock.run(function()
-    local start_time = util.time()
-    local start_elapsed = self.elapsed
+    local start_time = self._play_start_time
+    local start_elapsed = self._play_start_elapsed
 
     while self.playing and self.position <= #self.timeline do
       local event = self.timeline[self.position]
