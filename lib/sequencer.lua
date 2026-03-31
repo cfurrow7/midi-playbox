@@ -76,8 +76,29 @@ function Sequencer:rebuild_timeline()
     self.timeline, bpm,
     self.quantize_div, self.min_velocity, self.min_duration
   )
+  self:build_note_bars()
   self.position = 1
   self.elapsed = 0
+end
+
+-- Build note bars (start/end pairs) for tracker display
+function Sequencer:build_note_bars()
+  self.note_bars = {}
+  if not self.timeline then return end
+  local open = {}  -- key -> index in note_bars
+  for _, ev in ipairs(self.timeline) do
+    local key = ev.channel .. ":" .. ev.note
+    if ev.type == "note_on" and ev.velocity > 0 then
+      local bar = { t1 = ev.time, t2 = ev.time + 0.1, ch = ev.channel, note = ev.note, vel = ev.velocity }
+      table.insert(self.note_bars, bar)
+      open[key] = #self.note_bars
+    elseif ev.type == "note_off" or (ev.type == "note_on" and ev.velocity == 0) then
+      if open[key] then
+        self.note_bars[open[key]].t2 = ev.time
+        open[key] = nil
+      end
+    end
+  end
 end
 
 function Sequencer:get_bpm()
@@ -85,15 +106,37 @@ function Sequencer:get_bpm()
 end
 
 function Sequencer:set_bpm(bpm)
+  local old_bpm = self.bpm_override or self.original_bpm
   if bpm then
     self.bpm_override = math.max(20, math.min(300, bpm))
   else
     self.bpm_override = nil
   end
-  local was_playing = self.playing
-  if was_playing then self:stop() end
-  self:rebuild_timeline()
-  if was_playing then self:play() end
+  local new_bpm = self.bpm_override or self.original_bpm
+  if not self.timeline or old_bpm == new_bpm then return end
+
+  -- Scale all event times in place (no rebuild, no audio gap)
+  local ratio = old_bpm / new_bpm
+  for _, event in ipairs(self.timeline) do
+    event.time = event.time * ratio
+  end
+  if self.note_bars then
+    for _, bar in ipairs(self.note_bars) do
+      bar.t1 = bar.t1 * ratio
+      bar.t2 = bar.t2 * ratio
+    end
+  end
+  self.duration = self.duration * ratio
+  self.elapsed = self.elapsed * ratio
+
+  -- Seamless clock restart: cancel and re-launch from current position
+  -- No all_notes_off so there's zero audible interruption
+  if self.playing and self.clock_id then
+    clock.cancel(self.clock_id)
+    self.clock_id = nil
+    self.playing = false
+    self:play()
+  end
 end
 
 function Sequencer:play()

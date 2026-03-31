@@ -8,7 +8,7 @@ UI.__index = UI
 
 local TrackAssign = include("playopxy/lib/track_assign")
 
-local PAGES = { "PLAY", "TRACKS", "QUEUE", "LIBRARY" }
+local PAGES = { "PLAY", "TRACKS", "QUEUE", "LIBRARY", "TRACKER" }
 
 function UI.new(sequencer, queue, state)
   local self = setmetatable({}, UI)
@@ -251,14 +251,14 @@ function UI:draw()
   screen.text(PAGES[self.page])
 
   -- Page indicator dots
-  for i = 1, 4 do
+  for i = 1, 5 do
     screen.level(i == self.page and 15 or 2)
-    screen.rect(88 + (i - 1) * 5, 1, 3, 3)
+    screen.rect(83 + (i - 1) * 5, 1, 3, 3)
     screen.fill()
   end
 
   -- Mute overlay when K1 held (not on queue/library pages - they use K1 combos)
-  if self.k1_held and self.page ~= 3 and self.page ~= 4 then
+  if self.k1_held and self.page ~= 3 and self.page ~= 4 and self.page ~= 5 then
     self:draw_mute_overlay()
     screen.update()
     return
@@ -272,11 +272,15 @@ function UI:draw()
     self:draw_queue()
   elseif self.page == 4 then
     self:draw_library()
+  elseif self.page == 5 then
+    self:draw_tracker()
   end
 
-  -- Eye candy
-  self:draw_lissajous()
-  self:draw_pyramid()
+  -- Eye candy (skip on tracker - it uses the full screen)
+  if self.page ~= 5 then
+    self:draw_lissajous()
+    self:draw_pyramid()
+  end
 
   screen.update()
 end
@@ -668,7 +672,7 @@ function UI:enc(n, d)
   end
 
   if n == 1 then
-    self.page = util.clamp(self.page + d, 1, 4)
+    self.page = util.clamp(self.page + d, 1, 5)
   elseif self.page == 1 then
     self:enc_play(n, d)
   elseif self.page == 2 then
@@ -677,6 +681,8 @@ function UI:enc(n, d)
     self:enc_queue(n, d)
   elseif self.page == 4 then
     self:enc_library(n, d)
+  elseif self.page == 5 then
+    self:enc_tracker(n, d)
   end
 end
 
@@ -786,6 +792,8 @@ function UI:key(n, z)
     self:key_queue(n)
   elseif self.page == 4 then
     self:key_library(n)
+  elseif self.page == 5 then
+    self:key_play(n)  -- tracker reuses play/stop/restart controls
   end
 end
 
@@ -858,6 +866,115 @@ function UI:key_library(n)
       end
     end
   end
+end
+
+-- ===== TRACKER PAGE =====
+
+function UI:enc_tracker(n, d)
+  if n == 2 then
+    -- BPM adjust on tracker page too
+    local bpm = self.seq:get_bpm() + d
+    self.seq:set_bpm(bpm)
+  end
+end
+
+function UI:draw_tracker()
+  local bars = self.seq.note_bars
+  if not bars or #bars == 0 then
+    screen.level(4)
+    screen.move(64, 35)
+    screen.text_center("No song loaded")
+    return
+  end
+
+  local now = self.seq.elapsed
+  local window = 6    -- seconds ahead
+  local lookback = 1  -- seconds behind
+
+  -- Build rows from active tracks (up to 8)
+  local tc = math.min(self.seq:track_count(), 8)
+  if tc == 0 then return end
+
+  local row_h = math.floor(48 / tc)
+  local lm = 14  -- left margin for labels
+  local tw = 128 - lm
+  local total = window + lookback
+
+  -- Channel to row lookup
+  local ch_row = {}
+  for i, track in ipairs(self.seq.tracks) do
+    if i <= tc then
+      ch_row[track.source_ch] = i
+    end
+  end
+
+  -- Row labels + dividers
+  for i = 1, tc do
+    local y = 10 + (i - 1) * row_h
+    local track = self.seq.tracks[i]
+    local label = TrackAssign.role_label(track.role):sub(1, 2)
+    local lit = self.flash[i] and self.flash[i] > 0
+    screen.level(lit and 15 or (track.mute and 2 or 5))
+    screen.move(0, y + row_h - 2)
+    screen.text(label)
+    screen.level(1)
+    screen.move(lm, y)
+    screen.line(128, y)
+    screen.stroke()
+  end
+  -- Bottom divider
+  screen.level(1)
+  local bottom = 10 + tc * row_h
+  screen.move(lm, bottom)
+  screen.line(128, bottom)
+  screen.stroke()
+
+  -- Playhead
+  local ph_x = lm + math.floor(tw * lookback / total)
+  screen.level(6)
+  screen.move(ph_x, 10)
+  screen.line(ph_x, bottom)
+  screen.stroke()
+
+  -- Draw note bars
+  local t_start = now - lookback
+  local t_end = now + window
+
+  for _, bar in ipairs(bars) do
+    if bar.t2 < t_start then goto continue end
+    if bar.t1 > t_end then goto continue end
+
+    local row = ch_row[bar.ch]
+    if not row then goto continue end
+
+    local y_top = 10 + (row - 1) * row_h
+    local x1 = lm + math.floor(tw * (math.max(bar.t1, t_start) - t_start) / total)
+    local x2 = lm + math.floor(tw * (math.min(bar.t2, t_end) - t_start) / total)
+    local w = math.max(1, x2 - x1)
+
+    -- Note pitch mapped to y within row
+    local nfrac = math.max(0, math.min(1, (bar.note - 24) / 80))
+    local y = y_top + row_h - 2 - math.floor(nfrac * (row_h - 3))
+
+    -- Past = dim, crossing playhead = bright, future = medium
+    local playing = bar.t1 <= now and bar.t2 > now
+    local past = bar.t2 <= now
+    screen.level(playing and 15 or (past and 3 or 8))
+    screen.rect(x1, y, w, 2)
+    screen.fill()
+
+    ::continue::
+  end
+
+  -- Time + BPM
+  screen.level(6)
+  screen.move(lm, 8)
+  screen.text(format_time(now) .. " / " .. format_time(self.seq.duration))
+  local bpm = self.seq:get_bpm()
+  local bpm_str = tostring(math.floor(bpm))
+  if self.seq.bpm_override then bpm_str = bpm_str .. "*" end
+  screen.move(128, 8)
+  screen.text_right(bpm_str .. " bpm")
 end
 
 -- ===== HELPERS =====
